@@ -1,0 +1,186 @@
+name: Build and release Monolith
+
+# Publishes a release whenever package.json has a version that isn't released yet:
+# bump "version", add a CHANGELOG.md section, push to main. Installed copies update on their next launch.
+# Every release has the Windows installer, the Mac app (universal) and latest.json, which is signed
+# with the Monolith signing key (the MONOLITH_SIGNING_KEY secret). Installed copies ignore an
+# update whose latest.json doesn't verify.
+# "Run workflow" on the Actions tab makes a test build of any branch without publishing anything.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Is this version already released?
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "v$V" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version ($V)."; exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "Manual run: test build only."
+            echo "build=true" >> "$GITHUB_OUTPUT"; echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif gh release view "v$V" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Version $V is already released: tests only."
+            echo "build=false" >> "$GITHUB_OUTPUT"; echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $V is new: building and publishing."
+            echo "build=true" >> "$GITHUB_OUTPUT"; echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: whudsontosh/monolith-cyberpunk
+          path: games/cyberpunk
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          pip install --break-system-packages playwright==1.55.0
+          python3 -m playwright install --with-deps chromium
+          sudo apt-get install -y xvfb
+      - name: Build
+        run: |
+          python3 src/build.py
+          python3 games/cyberpunk/src/build.py
+      - name: Game manager and signatures
+        run: node tests/games_test.js
+      - name: Core screens with the tiny test game
+        run: python3 tests/core_test.py
+      - name: The desktop app end to end (with the Cyberpunk game)
+        env:
+          GAME_DIST: ${{ github.workspace }}/games/cyberpunk/dist/game
+        run: python3 tests/e2e.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-screens
+          path: test-out/
+          retention-days: 7
+
+  windows:
+    needs: [plan, test]
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Build the Windows installer
+        run: bash scripts/build-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ needs.plan.outputs.version }}
+          path: release/
+          retention-days: 14
+
+  windows-check:
+    needs: [plan, windows]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-${{ needs.plan.outputs.version }}
+          path: release/
+      - name: Check the installer and app on real Windows
+        shell: pwsh
+        run: ./scripts/windows-smoke.ps1
+
+  mac:
+    needs: [plan, test]
+    if: needs.plan.outputs.build == 'true'
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build the Mac app
+        run: bash scripts/build-mac.sh
+      - name: Check the app on a real Mac (start, table server, online link, signed self-update)
+        env:
+          MONOLITH_SIGNING_KEY: ${{ secrets.MONOLITH_SIGNING_KEY }}
+        run: bash scripts/mac-smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ needs.plan.outputs.version }}
+          path: release-mac/
+          retention-days: 14
+
+  publish:
+    needs: [plan, windows, windows-check, mac]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-${{ needs.plan.outputs.version }}
+          path: release/
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-${{ needs.plan.outputs.version }}
+          path: release/
+      - name: latest.json for both platforms, signed
+        env:
+          V: ${{ needs.plan.outputs.version }}
+          MONOLITH_SIGNING_KEY: ${{ secrets.MONOLITH_SIGNING_KEY }}
+        run: |
+          if [ -z "$MONOLITH_SIGNING_KEY" ]; then echo "::error::The MONOLITH_SIGNING_KEY secret isn't set, so this release can't be signed."; exit 1; fi
+          python3 scripts/make-latest.py "$V" "$GITHUB_REPOSITORY" \
+            --win "release/Monolith-Setup-$V.exe" \
+            --mac "release/Monolith-$V-mac.zip" > release/latest.json
+          node scripts/sign.js release/latest.json
+          node -e "const s=require('./signing');const f=require('fs');if(!s.verify(f.readFileSync('release/latest.json'),f.readFileSync('release/latest.json.sig','utf8'))){console.error('signature does not verify against the key built into the app');process.exit(1)}"
+          python3 scripts/release-notes.py "$V" > notes.md
+          cat release/latest.json
+          ls -la release
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.plan.outputs.version }}
+        run: |
+          gh release create "v$V" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Monolith $V" \
+            --notes-file notes.md \
+            --latest

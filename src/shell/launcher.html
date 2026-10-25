@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" data-role="launcher">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Monolith</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<style>
+body{margin:0;background:#000;color:#ecebe6}
+[hidden]{display:none!important}
+/*CSS*/
+</style>
+</head>
+<body class="launcher">
+<header class="l-top">
+  <div class="wrap l-bar"><span class="mono-mark" aria-hidden="true"></span><span class="mono-word">Monolith</span><span class="l-ver" id="l-ver"></span>
+    <span class="l-sp"></span><button class="btn sm ghost" data-act="l-update">Check for updates</button><button class="btn sm ghost" data-act="l-data">Open data folder</button></div>
+</header>
+<main class="wrap l-main" id="app">
+  <h1 class="l-title">Choose a game</h1>
+  <p class="l-lede">Pick the game, then whether you're playing or running it.</p>
+  <div class="slabs" id="slabs" aria-live="polite"><p class="faint">Looking for your games…</p></div>
+  <section class="l-more" id="more" hidden><h2>More games</h2><div class="slabs" id="slabs-more"></div></section>
+  <p class="l-foot">Monolith installs games only from its approved list, and checks every file against Monolith's signing key before a game runs.</p>
+</main>
+<div id="toast-host"></div>
+<script>
+"use strict";
+/*JS*/
+</script>
+</body>
+</html>

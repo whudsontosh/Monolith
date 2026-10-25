@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-role="/*ROLE*/">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Monolith</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<style>
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:#000;color:#ecebe6}
+img{max-width:100%}
+[hidden]{display:none!important}
+/*CSS*/
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="wrap">
+    <button class="brand" id="brand" data-act="mono-home" aria-label="Back to your games"><span class="mono-mark" aria-hidden="true"></span><span class="mono-word">Monolith</span></button>
+    <nav id="nav"></nav>
+    <div class="statusline" id="status"><span class="dot"></span><span>Loading…</span></div>
+  </div>
+</div>
+<main class="wrap" id="app"></main>
+<button class="dice-fab" data-act="toggle-tray" aria-label="Open dice tray">Dice</button>
+<div id="tray-host"></div>
+<div id="toast-host"></div>
+<div id="modal-host"></div>
+<input type="file" id="file-in" multiple hidden>
+<script>
+"use strict";
+/*JS*/
+</script>
+</body>
+</html>

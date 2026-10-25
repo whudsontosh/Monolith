@@ -1,0 +1,12 @@
+{
+  "format": "monolith-games",
+  "games": [
+    {
+      "id": "cyberpunk",
+      "name": "Cyberpunk",
+      "repo": "whudsontosh/monolith-cyberpunk",
+      "tagline": "Night City Dossier: build runners, run the GM console and play on the map table.",
+      "rulesets": [{ "id": "cp2020", "name": "Cyberpunk 2020" }]
+    }
+  ]
+}

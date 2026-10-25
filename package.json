@@ -1,0 +1,98 @@
+{
+  "name": "monolith",
+  "productName": "Monolith",
+  "version": "1.0.0",
+  "description": "Monolith: characters, campaigns and an online map table for tabletop games",
+  "main": "main.js",
+  "author": "Monolith",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "ws": "8.18.0"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8",
+    "resedit": "2.0.3"
+  },
+  "build": {
+    "appId": "com.whudsontosh.monolith",
+    "productName": "Monolith",
+    "copyright": "Monolith",
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "server.js",
+      "tunnel.js",
+      "updater.js",
+      "games.js",
+      "signing.js",
+      "games.json",
+      "app/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Monolith",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "Monolith-Setup-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    },
+    "electronVersion": "33.4.11",
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.role-playing-games",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true,
+      "minimumSystemVersion": "11.0",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Monolith connects to the GM's game table on your network when you join or host a game.",
+        "LSApplicationCategoryType": "public.app-category.role-playing-games"
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whudsontosh/monolith.git"
+  },
+  "scripts": {
+    "build": "python3 src/build.py",
+    "start": "python3 src/build.py && electron .",
+    "pack": "electron-builder --win --x64 --dir --publish never",
+    "pack:mac": "electron-builder --mac --universal --dir --publish never"
+  }
+}

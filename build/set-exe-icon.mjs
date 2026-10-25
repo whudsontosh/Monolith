@@ -1,0 +1,15 @@
+import * as ResEdit from 'resedit';
+import fs from 'fs';
+const exePath=process.argv[2], icoPath=process.argv[3], version=process.argv[4]||'1.0.0';
+const exe=ResEdit.NtExecutable.from(fs.readFileSync(exePath),{ignoreCert:true});
+const res=ResEdit.NtExecutableResource.from(exe);
+const ico=ResEdit.Data.IconFile.from(fs.readFileSync(icoPath));
+ResEdit.Resource.IconGroupEntry.replaceIconsForResource(res.entries,1,1033,ico.icons.map(i=>i.data));
+const vi=ResEdit.Resource.VersionInfo.fromEntries(res.entries)[0];
+const [a,b,c]=version.split('.').map(Number);
+vi.setFileVersion(a,b,c,0,1033);vi.setProductVersion(a,b,c,0,1033);
+vi.setStringValues({lang:1033,codepage:1200},{FileDescription:'Monolith',ProductName:'Monolith',CompanyName:'Monolith',LegalCopyright:'Monolith',OriginalFilename:'Monolith.exe',InternalName:'Monolith',FileVersion:version,ProductVersion:version});
+vi.outputToResourceEntries(res.entries);
+res.outputResource(exe);
+fs.writeFileSync(exePath,Buffer.from(exe.generate()));
+console.log('icon + version set');

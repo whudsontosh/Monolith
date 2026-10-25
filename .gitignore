@@ -1,0 +1,11 @@
+node_modules/
+app/
+web/
+dist-electron/
+release/
+release-mac/
+test-out/
+*.part
+*.pem
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+{
+  "format": "monolith-game",
+  "id": "testgame",
+  "name": "Test Game",
+  "version": "0.1.0",
+  "api": 1,
+  "minMonolith": "1.0.0",
+  "tagline": "A tiny game used only by Monolith's tests.",
+  "rulesets": [{ "id": "basic", "name": "Basic" }],
+  "entry": { "player": ["game.js"], "gm": ["game.js"] },
+  "css": []
+}
