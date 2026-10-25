@@ -60,7 +60,7 @@ async function check(fetchImpl, current, platform = process.platform) {
   if (!newer(info.version, current)) return null;
   const a = pickAsset(info, platform);
   if (!a) return null; // this release has nothing for this platform
-  if (typeof a.url !== 'string' || !a.url.startsWith(ASSET_PREFIX)) throw new Error('The update points somewhere unexpected, so it was ignored.');
+  if (typeof a.url !== 'string' || !a.url.toLowerCase().startsWith(ASSET_PREFIX.toLowerCase())) throw new Error('The update points somewhere unexpected, so it was ignored.');
   if (!/^[a-f0-9]{64}$/.test(a.sha256 || '')) throw new Error('The update has no checksum, so it was ignored.');
   const file = String(a.file || (platform === 'darwin' ? 'Monolith-mac.zip' : 'Monolith-Setup.exe')).replace(/[^\w.-]/g, '');
   if (platform === 'darwin' && !/\.zip$/i.test(file)) throw new Error('The Mac update isn\u2019t a .zip, so it was ignored.');

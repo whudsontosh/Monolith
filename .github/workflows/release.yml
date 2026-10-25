@@ -165,7 +165,8 @@ jobs:
           MONOLITH_SIGNING_KEY: ${{ secrets.MONOLITH_SIGNING_KEY }}
         run: |
           if [ -z "$MONOLITH_SIGNING_KEY" ]; then echo "::error::The MONOLITH_SIGNING_KEY secret isn't set, so this release can't be signed."; exit 1; fi
-          python3 scripts/make-latest.py "$V" "$GITHUB_REPOSITORY" \
+          # the repository name as installed copies expect it (they compare download links against it)
+          python3 scripts/make-latest.py "$V" "whudsontosh/monolith" \
             --win "release/Monolith-Setup-$V.exe" \
             --mac "release/Monolith-$V-mac.zip" > release/latest.json
           node scripts/sign.js release/latest.json
