@@ -14,10 +14,11 @@ ditto -x -k "$ZIP" "$APPS"
 APP="$APPS/Monolith.app"
 BIN="$APP/Contents/MacOS/Monolith"
 report() { # also surface details as a build annotation (readable without the full log)
-  local body; body="$( { echo "$1"; for f in "$WORK"/*.json "$WORK"/*.after "$WORK"/*.log; do [ -f "$f" ] && { echo "--- $(basename "$f")"; tail -c 1500 "$f"; }; done; cat "$TMPDIR"/Monolith-update/mac-update.log 2>/dev/null | tail -c 800; } )"
+  local body; body="$( { echo "$1"; for f in "$WORK"/*.json "$WORK"/*.after "$WORK"/*.log; do [ -f "$f" ] && { echo "--- $(basename "$f")"; tail -c 1500 "$f"; }; done; cat "${TMPDIR:-/tmp}"/Monolith-update/mac-update.log 2>/dev/null | tail -c 800; } 2>&1 || true)"
   body="${body//'%'/'%25'}"; body="${body//$'\r'/'%0D'}"; body="${body//$'\n'/'%0A'}"
   echo "::$2 title=Mac check::${body:0:6000}"; }
 fail() { echo "SMOKE FAIL: $*"; report "FAIL: $*" error; exit 1; }
+trap 'rc=$?; report "FAIL (exit $rc) at line $LINENO: $BASH_COMMAND" error; exit $rc' ERR
 wait_for() { for i in $(seq 1 "$2"); do [ -f "$1" ] && grep -q '"finished": true' "$1" && return 0; sleep 1; done; return 1; }
 
 echo "== 1. starts on the game shelf, serves the table, goes online"
