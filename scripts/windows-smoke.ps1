@@ -4,7 +4,9 @@ $ErrorActionPreference = "Stop"
 $version = (Get-Content package.json | ConvertFrom-Json).version
 $setup = Resolve-Path "release/Monolith-Setup-$version.exe"
 Write-Host "== installing $setup silently"
-$p = Start-Process -FilePath $setup -ArgumentList "/S" -PassThru -Wait
+# -Wait would also wait for the app the installer reopens, so wait for the installer alone
+$p = Start-Process -FilePath $setup -ArgumentList "/S" -PassThru
+if (-not $p.WaitForExit(300000)) { throw "the installer didn't finish within 5 minutes" }
 if ($p.ExitCode -ne 0) { throw "installer exited with $($p.ExitCode)" }
 Start-Sleep -Seconds 4
 Get-Process Monolith -ErrorAction SilentlyContinue | Stop-Process -Force   # the installer reopens the app after a silent install
