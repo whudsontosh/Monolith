@@ -125,6 +125,11 @@ npm install
 MONOLITH_DEV_GAMES=../monolith-cyberpunk/dist/game npm start
 ```
 
+## Future Plans
+
+ - Community games manager
+ - Full documentation for community builds
+
 ## Developing Monolith
 
 New to working on Monolith or making a game? Start with [DEVELOPING.md](DEVELOPING.md): setup, the
