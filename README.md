@@ -127,6 +127,9 @@ MONOLITH_DEV_GAMES=../monolith-cyberpunk/dist/game npm start
 
 ## Developing Monolith
 
+New to working on Monolith or making a game? Start with [DEVELOPING.md](DEVELOPING.md): setup, the
+folder-game loop, a starter game, publishing and testing.
+
 ```sh
 npm install
 python3 src/build.py        # builds app/ (desktop pages) and web/ (the same pages for a browser)
