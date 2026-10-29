@@ -7,6 +7,13 @@
       "repo": "whudsontosh/monolith-cyberpunk",
       "tagline": "Night City Dossier: build runners, run the GM console and play on the map table.",
       "rulesets": [{ "id": "cp2020", "name": "Cyberpunk 2020" }]
+    },
+    {
+      "id": "dnd",
+      "name": "Dungeons and Dragons",
+      "repo": "whudsontosh/monolith-dungeons-and-dragons",
+      "tagline": "Beta: D&D 2024 rules. A step-by-step character creator, a full sheet with rolls, and the GM's party screens.",
+      "rulesets": [{ "id": "dnd5.5e", "name": "5.5e" }]
     }
   ]
 }
