@@ -1,7 +1,7 @@
 {
   "name": "monolith",
   "productName": "Monolith",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Monolith: characters, campaigns and an online map table for tabletop games",
   "main": "main.js",
   "author": "Monolith",

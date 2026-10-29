@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+- **Dungeons and Dragons** joins the games list (beta): D&D 2024 rules with a step-by-step character
+  creator, a full character sheet with rolls, and the GM's party screens.
+- The list of games built into Monolith now includes it too, so it shows under More games even
+  when the online list can't be reached.
+
 ## 1.0.0
 
 The first version of Monolith: the app for tabletop games, with games as separate, signed downloads.
