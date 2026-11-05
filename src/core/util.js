@@ -1,6 +1,11 @@
 /* ============================== MONOLITH CORE: UTILITIES ==============================
    Small helpers every screen uses. Games use these too (they're part of Monolith API v1). */
-const d=n=>1+Math.floor(Math.random()*n);
+/* every die the core rolls is noted for a moment, so Dice.push can show the dice a roll used
+   (3D dice, dice3d.js). Notes clear at the next task, so dice rolled for anything else never show. */
+const DiceCap={list:[],t:0,
+  note(n,v){if(this.list.length<40)this.list.push([n,v]);if(!this.t)this.t=setTimeout(()=>{this.list=[];this.t=0},0)},
+  take(){const l=this.list;this.list=[];if(this.t)clearTimeout(this.t);this.t=0;return l}};
+const d=n=>{const v=1+Math.floor(Math.random()*n);DiceCap.note(n,v);return v};
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-5);

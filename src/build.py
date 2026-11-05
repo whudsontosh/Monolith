@@ -7,7 +7,7 @@ ROOT=os.path.dirname(HERE)
 def rd(*p): return open(os.path.join(HERE,*p),encoding="utf-8").read()
 
 VERSION=json.load(open(os.path.join(ROOT,"package.json")))["version"]
-CORE=["core/util.js","core/monolith.js","core/ui.js","core/dice.js","core/store.js","core/print.js","core/zip.js","core/map.js","core/table.js"]
+CORE=["core/util.js","core/monolith.js","core/ui.js","core/dice.js","core/dice3d.js","core/store.js","core/print.js","core/zip.js","core/map.js","core/table.js"]
 ROLES={"player":["player/store.js","player/net.js","player/boot.js"],"gm":["gm/state.js","gm/campaigns.js","gm/host.js","gm/boot.js"]}
 CSS=rd("monolith.css")
 MORPH="/*! morphdom 2.7.4 | MIT License | (c) Patrick Steele-Idem | github.com/patrick-steele-idem/morphdom */\n"+rd("vendor","morphdom-umd.min.js")

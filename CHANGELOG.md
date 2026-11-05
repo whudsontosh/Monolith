@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+- **3D dice.** When you roll, your dice tumble across your screen and land on the numbers you rolled.
+  Everyone else at the table still sees just the result in their log.
+- Turn them on or off with the **3D dice** switch in the dice tray. They start off if your computer
+  is set to reduce motion.
+- Each game can give the dice its own look: colors, font, and a highlight for the highest and
+  lowest faces.
+
 ## 1.0.1
 
 - **Dungeons and Dragons** joins the games list (beta): D&D 2024 rules with a step-by-step character

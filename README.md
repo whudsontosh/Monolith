@@ -105,6 +105,32 @@ Its script calls `Monolith.registerGame({ id, api: 1, rulesets: { <id>: ruleset 
 
 The registration can also give `brand(role)` (the game's wordmark in the top bar) and `diceLabel`.
 
+**3D dice.** When someone rolls, the dice the roll used tumble across their own screen and land on
+the rolled numbers; other people at the table get only the result. Every die rolled with the core's
+`d(n)` in the same moment as a `Dice.push` (including `Dice.raw` and `Dice.expr`) is shown, so games
+get this without doing anything. D4, D6, D8, D10, D12, D20 and D100 (as two D10s) are drawn; other
+dice are left out. Each player can turn it off with the "3D dice" switch in the dice tray (saved as
+`dice3d` in `monolith-settings`; off by default when the computer asks for reduced motion).
+
+A game can give its dice their own look by registering `dice`. Every field is optional; colors are
+CSS colors, anything invalid is ignored, and nothing in it runs as code:
+
+```js
+dice:{
+  body:"#0b0f14",     // the die
+  edge:"#ff5e4f",     // edges, and the light on the faces
+  text:"#3ef2ff",     // numbers
+  high:"#f9e81c",     // the number when a die lands on its highest face (D6 and up)
+  low:"#ff5e4f",      // ...and on a 1
+  font:'"Share Tech Mono",monospace', // a font the game already loads
+  edgeWidth:1.6,      // 0 to 4
+  sides:{"20":{body:"#1a1030"}},      // the same fields for one kind of die
+}
+```
+
+Without it, the dice use the page's `--panel2`, `--ink` and `--f-display`, so a game's skin already
+colors them.
+
 Games use the core's helpers (all documented in `src/core`): `patch`, `rg`, `A` (click actions),
 `CHANGE`, `MODALS`, `BEFORE_RENDER`, `FILE_HANDLERS`, `Dice`, `Tray`, `Print`, `showNotice`,
 `Monolith.store` (the game's own saved data), `Monolith.files`, `Monolith.zip`, `Monolith.theme.map`,
