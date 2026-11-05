@@ -105,8 +105,8 @@ Its script calls `Monolith.registerGame({ id, api: 1, rulesets: { <id>: ruleset 
 
 The registration can also give `brand(role)` (the game's wordmark in the top bar) and `diceLabel`.
 
-**3D dice.** When someone rolls, the dice the roll used tumble across their own screen and land on
-the rolled numbers; other people at the table get only the result. Every die rolled with the core's
+**3D dice.** When someone rolls, the dice the roll used are thrown across their own screen (a small
+physics simulation: they bounce off the window's edges and each other) and land on the rolled numbers; other people at the table get only the result. Every die rolled with the core's
 `d(n)` in the same moment as a `Dice.push` (including `Dice.raw` and `Dice.expr`) is shown, so games
 get this without doing anything. D4, D6, D8, D10, D12, D20 and D100 (as two D10s) are drawn; other
 dice are left out. Each player can turn it off with the "3D dice" switch in the dice tray (saved as

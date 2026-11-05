@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- **Real dice physics.** Your dice are thrown from the dice button and fly, bounce, roll and knock into
+  each other, using the edges of the window as walls, before settling on the numbers you rolled.
+  The motion is smoother at any screen refresh rate.
+
 ## 1.1.0
 
 - **3D dice.** When you roll, your dice tumble across your screen and land on the numbers you rolled.

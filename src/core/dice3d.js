@@ -89,7 +89,7 @@ const Dice3D=(()=>{
   
   /* ---- the overlay ---- */
   let cv=null,ctx=null,dice=[],t0=0,raf=0,W=0,H=0,DPR=1;
-  const ROLL=1150,HOLD=1500,FADE=450;
+  const DT=1/240,HOLD=1.3,FADE=.45,MAXT=4.5; // seconds
   const VIEW=axisAngle([1,0,0],-0.42); // the table is seen from slightly in front
   const LIGHT=norm([-.45,.6,.75]);
   function canvas(){if(cv&&cv.isConnected)return cv;
@@ -108,48 +108,99 @@ const Dice3D=(()=>{
       if(out.length>=MAX)break}
     return out.slice(0,MAX)}
 
+  /* ---- the throw: a small physics simulation, run in full before the first frame ----
+     Dice leave the dice button, fly, bounce on the table, roll with friction, hit each other and
+     the four edges of the window, and come to rest. Rotation comes from the motion (a rolling die
+     turns as it travels). The simulation is run first and then "rewound": each die starts turned
+     so that, after all the spinning it is about to do, it rests on the rolled face. */
+  function simulate(list,R){
+    const n=list.length,diag=Math.hypot(W,H),m=R*1.05,g=R*60,rest=R*.5,STEPS=Math.round(MAXT/DT);
+    const B=list.map((_,i)=>{const a=.1+rnd()*1.05,sp=diag*Math.sqrt(2*.55*(.15+rnd()*.95)); // speed for a random travel distance
+      const ax=norm([rnd()-.5,rnd()-.5,rnd()-.5]),w=10+rnd()*8;
+      return {x:W-m-R*.4-rnd()*R*1.5-(i%4)*R*.7,y:H-m-R*.4-rnd()*R*1.5-Math.floor(i/4)*R*.7,z:R*(.4+rnd()*.5),
+        vx:-Math.cos(a)*sp,vy:-Math.sin(a)*sp,vz:R*(3.5+rnd()*3.5),w:mul(ax,w),Q:[[1,0,0],[0,1,0],[0,0,1]],
+        path:[],still:false,restAt:STEPS}});
+    let step=0;
+    for(;step<STEPS;step++){
+      const t=step*DT,late=t>MAXT*.7;
+      for(const b of B){if(b.still){b.path.push([b.x,b.y,0,b.Q]);continue}
+        // height: gravity and bounces on the table
+        b.vz-=g*DT;b.z+=b.vz*DT;
+        if(b.z<=0){b.z=0;if(b.vz<0){b.vz=-b.vz*.42;if(b.vz<R*2.2)b.vz=0}}
+        const ground=b.z<=0&&b.vz===0,touch=b.z<=R*.02;
+        // sliding and rolling friction on the table, a little drag in the air
+        const sp=Math.hypot(b.vx,b.vy);
+        if(touch){const dec=diag*.55*DT,k=sp>0?Math.max(0,sp-dec)/sp:0,f=Math.exp(-1.4*DT)*(late?Math.exp(-6*DT):1);b.vx*=k*f;b.vy*=k*f}
+        else{const f=Math.exp(-.15*DT);b.vx*=f;b.vy*=f}
+        b.x+=b.vx*DT;b.y+=b.vy*DT;
+        // the edges of the window are walls (the top one counts the die's height above the table)
+        if(b.x<m){b.x=m;b.vx=Math.abs(b.vx)*.7;b.w=mul(b.w,.85)}
+        if(b.x>W-m){b.x=W-m;b.vx=-Math.abs(b.vx)*.7;b.w=mul(b.w,.85)}
+        if(b.y-b.z*1.1<m){b.y=m+b.z*1.1;b.vy=Math.abs(b.vy)*.7;b.w=mul(b.w,.85)}
+        if(b.y>H-m){b.y=H-m;b.vy=-Math.abs(b.vy)*.7;b.w=mul(b.w,.85)}
+      }
+      // dice knock into each other
+      for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){const A=B[i],C=B[j];if(Math.abs(A.z-C.z)>R)continue;
+        let dx=C.x-A.x,dy=C.y-A.y,dd=Math.hypot(dx,dy)||.01;const min=R*1.9;if(dd>=min)continue;
+        dx/=dd;dy/=dd;const push=(min-dd)/2;
+        if(!A.still){A.x-=dx*push;A.y-=dy*push}if(!C.still){C.x+=dx*push;C.y+=dy*push}
+        const rel=(C.vx-A.vx)*dx+(C.vy-A.vy)*dy;
+        if(rel<0){const J=-(1.6)*rel/2;A.vx-=J*dx;A.vy-=J*dy;C.vx+=J*dx;C.vy+=J*dy;
+          if(A.still&&Math.hypot(A.vx,A.vy)>rest*3)A.still=false;if(C.still&&Math.hypot(C.vx,C.vy)>rest*3)C.still=false}}
+      for(const b of B){if(b.still)continue;
+        const sp=Math.hypot(b.vx,b.vy),ground=b.z<=0&&b.vz===0;
+        // spin: on the table it settles into rolling along the direction of travel
+        if(b.z<=R*.02){const roll=[b.vy/R,b.vx/R,0];const k=Math.min(1,DT*16);b.w=add(b.w,mul(sub(roll,b.w),k))}
+        else b.w=mul(b.w,Math.exp(-.25*DT));
+        const wl=len(b.w);if(wl>1e-6)b.Q=mm(axisAngle(b.w,wl*DT),b.Q);
+        if(ground&&sp<rest&&wl<.6){b.vx=b.vy=0;b.w=[0,0,0];b.still=true;b.restAt=step}
+        b.path.push([b.x,b.y,b.z,b.Q])}
+      if(B.every(b=>b.still))break}
+    const N=Math.min(step+1,STEPS);
+    for(const b of B){b.path.length=Math.min(b.path.length,N);if(!b.still){b.restAt=N-1}}
+    return {B,N}}
+
   function start(faces){
     if(!enabled()||typeof document==="undefined"||!document.body)return false;
     const P=plan(faces);if(!P.length)return false;
     canvas();size();
-    const n=P.length,R=clamp(Math.min(W,H)*.06,26,56)*(n>6?.72:n>3?.86:1);
-    // land in the open part of the window: left of the dice tray and the map's sidebar
-    const tray=document.querySelector(".tray"),side=document.body.classList.contains("mapmode")?Math.min(parseFloat(cssVar("--map-side-w","420"))||420,W*.6):0;
-    const right=Math.max(side,tray?W-tray.getBoundingClientRect().left:0),AW=Math.max(W*.45,W-right),mid=AW/2;
-    const gap=R*2.5,perRow=Math.max(1,Math.min(n,Math.floor((AW*.8)/gap))),rows=Math.ceil(n/perRow);
+    const n=P.length,R=clamp(Math.min(W,H)*.055,24,52)*(n>6?.72:n>3?.86:1);
+    const {B,N}=simulate(P,R);
     dice=P.map((p,i)=>{
       const S=solidFor(p.s),labels=labelsFor(p.s,p.kind);
       const fi=Math.max(0,labels.indexOf(p.label)),F=S.faces[fi];
-      // turn the rolled face toward the viewer, number upright, with a little twist
+      // the resting turn: rolled face toward the viewer, number upright, with a little twist
       const tw=(rnd()-.5)*.7,cz=Math.cos(tw),sz=Math.sin(tw);
-      const B=[F.right,F.up,F.n],T=[[cz,sz,0],[-sz,cz,0],[0,0,1]];
-      const Rf=[[0,0,0],[0,0,0],[0,0,0]];for(let r=0;r<3;r++)for(let c=0;c<3;c++)Rf[r][c]=T[0][r]*B[0][c]+T[1][r]*B[1][c]+T[2][r]*B[2][c];
-      const row=Math.floor(i/perRow),col=i%perRow,inRow=row===rows-1?n-row*perRow:perRow;
-      const ex=mid+(col-(inRow-1)/2)*gap+(rnd()-.5)*R*.5,ey=H*.52+(row-(rows-1)/2)*gap+(rnd()-.5)*R*.4;
-      const sx=W+R*2+rnd()*R*3,sy=H*(.55+rnd()*.35);
-      const dir=norm([ex-sx,-(ey-sy),0]);
-      return {p,S,labels,Rf,R,ex,ey,sx,sy,axis:cross([0,0,1],dir),spin:(3+rnd()*2.5)*Math.PI,delay:i*45,look:lookFor(p.s)}});
-    t0=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(frame);
+      const Bv=[F.right,F.up,F.n],T=[[cz,sz,0],[-sz,cz,0],[0,0,1]];
+      const Rf=[[0,0,0],[0,0,0],[0,0,0]];for(let r=0;r<3;r++)for(let c=0;c<3;c++)Rf[r][c]=T[0][r]*Bv[0][c]+T[1][r]*Bv[1][c]+T[2][r]*Bv[2][c];
+      // rewind: start turned so the simulated spin ends exactly at Rf
+      const b=B[i],QT=b.path[b.path.length-1][3],QTt=[[QT[0][0],QT[1][0],QT[2][0]],[QT[0][1],QT[1][1],QT[2][1]],[QT[0][2],QT[1][2],QT[2][2]]];
+      return {p,S,labels,R,fi,path:b.path,restAt:b.restAt,C:mm(QTt,Rf),look:lookFor(p.s)}});
+    endT=N*DT;t0=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(frame);
     window.removeEventListener("resize",size);window.addEventListener("resize",size);
     return true}
+  let endT=0;
   function stop(){cancelAnimationFrame(raf);raf=0;dice=[];if(cv){cv.remove();cv=null}window.removeEventListener("resize",size)}
 
-  const easeOut=t=>1-Math.pow(1-t,3);
   function frame(now){
-    const t=now-t0;if(t>ROLL+HOLD+FADE+200){stop();return}
+    const t=Math.max(0,(now-t0)/1000);if(t>endT+HOLD+FADE+.1){stop();return}
     ctx.setTransform(DPR,0,0,DPR,0,0);ctx.clearRect(0,0,W,H);
-    const alpha=t>ROLL+HOLD?clamp(1-(t-ROLL-HOLD)/FADE,0,1):1;ctx.globalAlpha=alpha;
-    for(const D of [...dice].sort((a,b)=>a.ey-b.ey))drawDie(D,clamp((t-D.delay)/ROLL,0,1));
+    ctx.globalAlpha=t>endT+HOLD?clamp(1-(t-endT-HOLD)/FADE,0,1):1;
+    // between two simulation steps, ease the position so motion stays smooth at any frame rate
+    const f=t/DT,k=Math.floor(f),u=f-k;
+    const at=D=>{const L=D.path.length-1,a=D.path[Math.min(k,L)],b=D.path[Math.min(k+1,L)];
+      return {x:a[0]+(b[0]-a[0])*u,y:a[1]+(b[1]-a[1])*u,z:a[2]+(b[2]-a[2])*u,Q:a[3],still:k>=D.restAt}};
+    const S=dice.map(D=>({D,s:at(D)})).sort((p,q)=>(p.s.y-p.s.z*.5)-(q.s.y-q.s.z*.5));
+    for(const o of S)drawDie(o.D,o.s);
     ctx.globalAlpha=1;raf=requestAnimationFrame(frame)}
-  function drawDie(D,u){
-    const e=easeOut(u),x=D.sx+(D.ex-D.sx)*e,y=D.sy+(D.ey-D.sy)*e;
-    const hop=Math.abs(Math.sin(u*Math.PI*3.2))*Math.pow(1-u,1.6);  // bounces that die away
-    const R=D.R*(1+hop*.35);
-    const M=mm(VIEW,mm(axisAngle(D.axis,D.spin*(1-e)),D.Rf));
+  function drawDie(D,st){
+    const x=st.x,y=st.y,hop=clamp(st.z/D.R,0,3),u=st.still?1:0;
+    const R=D.R*(1+hop*.12);
+    const M=mm(VIEW,mm(st.Q,D.C));
     // shadow on the table
-    ctx.save();ctx.globalAlpha*=.38*(1-hop*.5);ctx.fillStyle="#000";ctx.beginPath();
-    ctx.ellipse(x+R*.12+hop*R*.5,y+R*.55+hop*R*.6,R*(1-hop*.2),R*.42*(1-hop*.2),0,0,Math.PI*2);ctx.fill();ctx.restore();
-    const cy=y-hop*R*1.1,F=6;
+    ctx.save();ctx.globalAlpha*=.38/(1+hop*.6);ctx.fillStyle="#000";ctx.beginPath();
+    ctx.ellipse(x+D.R*.12,y+D.R*.55,D.R*(1-hop*.12),D.R*.42*(1-hop*.12),0,0,Math.PI*2);ctx.fill();ctx.restore();
+    const cy=y-st.z*1.1,F=6;
     const proj=v=>{const p=mv(M,v);const k=F/(F-p[2]);return [x+p[0]*R*k,cy-p[1]*R*k,p[2]]};
     const P=D.S.V.map(proj),L=D.look,body=D.rgb||(D.rgb=rgb(L.body)),lit=D.lit||(D.lit=rgb(L.edge));
     const vis=D.S.faces.map((f,i)=>({f,i,n:mv(M,f.n),z:mv(M,f.c)[2]})).filter(o=>o.n[2]>1e-3).sort((a,b)=>a.z-b.z);
@@ -162,7 +213,7 @@ const Dice3D=(()=>{
       const lab=D.labels[o.i];if(!lab)continue;
       const c=proj(f.c),s=f.r*.95,rx=proj(add(f.c,mul(f.right,s))),uy=proj(add(f.c,mul(f.up,-s)));
       const mark=D.p.s>=8&&(lab==="6"||lab==="9")?".":"";
-      const chosen=o.i===D.labels.indexOf(D.p.label)&&u>=1;
+      const chosen=o.i===D.fi&&u>=1;
       ctx.save();ctx.globalAlpha*=clamp(o.n[2]*2.4,0,1);
       const k=1/100;ctx.transform((rx[0]-c[0])*k,(rx[1]-c[1])*k,(uy[0]-c[0])*k,(uy[1]-c[1])*k,c[0],c[1]);
       ctx.font=`600 ${lab.length>1?78:100}px ${L.font}`;ctx.textAlign="center";ctx.textBaseline="middle";
@@ -170,6 +221,8 @@ const Dice3D=(()=>{
       ctx.fillStyle=chosen&&D.p.top&&L.high?L.high:chosen&&D.p.bottom&&L.low?L.low:L.text;
       ctx.fillText(lab+mark,0,6);ctx.restore()}
   }
-  return {start,stop,enabled,plan,get busy(){return !!raf},get count(){return dice.length},_solid:solidFor,_labels:labelsFor};
+  return {start,stop,enabled,plan,get busy(){return !!raf},get count(){return dice.length},
+    // for the tests: where each die stops, and how far its rolled face is from facing the viewer
+    _rest(){const Z=mv(VIEW,[0,0,1]);return dice.map(D=>{const e=D.path[D.path.length-1],F=D.S.faces[D.fi];return {x:e[0],y:e[1],w:W,h:H,t:D.restAt*DT,face:1-dot(mv(VIEW,mv(mm(e[3],D.C),F.n)),Z)}})},_solid:solidFor,_labels:labelsFor};
 })();
 CHANGE.dice3d=el=>{Settings.set("dice3d",!!el.checked);if(!el.checked)Dice3D.stop()};
