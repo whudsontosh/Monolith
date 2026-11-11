@@ -16,7 +16,7 @@ function inPoly(x,y,p){let c=false;for(let i=0,j=p.length-2;i<p.length;j=i,i+=2)
 
 class MapView{
   constructor(cfg){
-    this.cfg=cfg; // {role:'gm'|'player', getMap(), canMove(tok), canErase(d), canTpl(t), canPlaceTpl(), onEvent(type,data), imgUrl(asset), me(){return {color,name}}, ringFor(tok), activeTok()}
+    this.cfg=cfg; // {role:'gm'|'player', getMap(), canMove(tok), canErase(d), canTpl(t), canPlaceTpl(), canState(tok), onEvent(type,data), imgUrl(asset), me(){return {color,name}}, ringFor(tok), activeTok()}
     this.el=document.createElement("div");this.el.className="mapview";this.el.tabIndex=0;
     this.canvas=document.createElement("canvas");this.el.appendChild(this.canvas);
     this.hud=document.createElement("div");this.hud.className="map-hud";this.el.appendChild(this.hud);
@@ -87,7 +87,9 @@ class MapView{
     const m=this.map;if(!m)return;this.el.focus({preventScroll:true});
     try{this.canvas.setPointerCapture(e.pointerId)}catch(_){}
     const p=this.pt(e),w=this.toWorld(p.x,p.y);
-    if(e.button===1||e.button===2||this.space||this.tool==="pan"){this.drag={k:"pan",sx:p.x,sy:p.y,cx:this.cam.x,cy:this.cam.y};this.canvas.style.cursor="grabbing";return}
+    this.emit("token-menu",null);
+    if(e.button===1||e.button===2||this.space||this.tool==="pan"){const mt=e.button===2?this.hitToken(w):null;
+      this.drag={k:"pan",sx:p.x,sy:p.y,cx:this.cam.x,cy:this.cam.y,menu:mt&&this.cfg.canState&&this.cfg.canState(mt)?mt.id:null};this.canvas.style.cursor="grabbing";return}
     if(e.button!==0)return;
     if(e.altKey||this.tool==="ping"){this.addPing(w.x,w.y,this.cfg.me().color);this.emit("ping",{x:w.x,y:w.y});return}
     const t=this.tool;
@@ -124,7 +126,7 @@ class MapView{
       if(this.ruler&&this.ruler.path&&m){const P=this.ruler.pts;P[P.length-1]=Grid.snapMeasure(m.grid,w.x,w.y);this.emitRuler(false);this.invalidate()}
       if(this.tool==="select"&&m){const tok=this.hitToken(w);const id=tok?tok.id:null;if(id!==this.hover){this.hover=id;this.canvas.style.cursor=tok&&this.cfg.canMove(tok)?"grab":"default";this.invalidate()}}
       return}
-    if(d.k==="pan"){this.cam.x=d.cx-(p.x-d.sx)/this.cam.z;this.cam.y=d.cy-(p.y-d.sy)/this.cam.z;this.invalidate();return}
+    if(d.k==="pan"){if(Math.hypot(p.x-d.sx,p.y-d.sy)>4)d.menu=null;this.cam.x=d.cx-(p.x-d.sx)/this.cam.z;this.cam.y=d.cy-(p.y-d.sy)/this.cam.z;this.invalidate();return}
     if(d.k==="tok"){const tok=(m.tokens||[]).find(x=>x.id===d.id);if(!tok){this.drag=null;return}
       tok.x=clamp(w.x-d.dx,0,m.w);tok.y=clamp(w.y-d.dy,0,m.h);d.moved=true;this.canvas.style.cursor="grabbing";
       const now=performance.now();if(now-this.lastEmit>45){this.lastEmit=now;this.emit("move",{id:tok.id,x:tok.x,y:tok.y,final:false})}
@@ -147,7 +149,7 @@ class MapView{
     const d=this.drag;this.drag=null;const m=this.map;
     if(this.tool==="pan")this.canvas.style.cursor="grab";else if(this.tool==="select")this.canvas.style.cursor="default";
     if(!d||!m)return;
-    if(d.k==="pan"){this.saveCam();return}
+    if(d.k==="pan"){this.saveCam();if(d.menu)this.emit("token-menu",{id:d.menu,x:d.sx,y:d.sy});return}
     if(d.k==="tok"){const tok=(m.tokens||[]).find(x=>x.id===d.id);if(!tok)return;
       if(!d.moved){this.invalidate();return}
       if(m.grid.snap!==false){const s=Grid.snap(m.grid,tok.x,tok.y,tok.size);tok.x=clamp(s.x,0,m.w);tok.y=clamp(s.y,0,m.h)}
@@ -241,6 +243,14 @@ class MapView{
       const ring=this.cfg.ringFor?this.cfg.ringFor(t):null;
       if(ring&&ring.color){c.lineWidth=Math.max(3/z,r*0.14);c.strokeStyle=ring.color;c.beginPath();c.arc(t.x,t.y,r*1.04,-Math.PI/2,-Math.PI/2+Math.PI*2*clamp(ring.frac??1,0.05,1));c.stroke();
         if(ring.dead){c.strokeStyle="#ff4459";c.lineWidth=Math.max(2/z,r*0.12);c.beginPath();c.moveTo(t.x-r*0.6,t.y-r*0.6);c.lineTo(t.x+r*0.6,t.y+r*0.6);c.moveTo(t.x+r*0.6,t.y-r*0.6);c.lineTo(t.x-r*0.6,t.y+r*0.6);c.stroke()}}
+      const cs=Cond.cleanConds(t.conds);
+      if(cs.length&&r*z>=9){const br=clamp(r*0.3,6.5/z,15/z),show=cs.length>6?5:cs.length;c.setLineDash([]);
+        for(let i=0;i<(cs.length>6?6:show);i++){const a=-1.05+i*Math.min(0.66,2.4*br/r),bx=t.x+Math.cos(a)*r*1.02,by=t.y+Math.sin(a)*r*1.02,more=i>=show,k=more?null:Cond.get(cs[i].id);
+          c.beginPath();c.arc(bx,by,br,0,Math.PI*2);c.fillStyle=more?"#0b0c11":k.color;c.fill();c.lineWidth=Math.max(1/z,br*0.14);c.strokeStyle="#0b0c11";c.stroke();
+          const ip=more?null:Cond.path(k);
+          if(ip){c.save();c.translate(bx,by);c.scale(br*1.25/12,br*1.25/12);c.translate(-12,-12);c.lineWidth=2.6;c.lineCap="round";c.lineJoin="round";c.strokeStyle="#fff";c.stroke(ip);c.restore()}
+          else{c.fillStyle="#fff";c.font=`700 ${br*(more?0.95:1.0)}px ${TH.font}`;c.textAlign="center";c.textBaseline="middle";c.fillText(more?"+"+(cs.length-show):k.name.slice(0,2),bx,by+br*0.06)}
+          if(!more&&cs[i].rounds&&br*z>=8){const tx=bx+br*0.85,ty=by+br*0.9;c.font=`700 ${br*0.95}px ${TH.mono}`;c.textAlign="center";c.textBaseline="middle";c.lineWidth=br*0.3;c.strokeStyle="#0b0c11";c.strokeText(String(cs[i].rounds),tx,ty);c.fillStyle="#fff";c.fillText(String(cs[i].rounds),tx,ty)}}}
       if(caughtBy.has(t.id)){c.setLineDash([]);c.lineWidth=Math.max(3/z,r*0.1);c.strokeStyle=caughtBy.get(t.id);c.beginPath();c.arc(t.x,t.y,r*1.3,0,Math.PI*2);c.stroke()}
       if(t.id===this.sel||t.id===this.hover){c.setLineDash([6/z,4/z]);c.lineWidth=2/z;c.strokeStyle=t.id===this.sel?TH.select:"rgba(255,255,255,.6)";c.beginPath();c.arc(t.x,t.y,r*1.18,0,Math.PI*2);c.stroke();c.setLineDash([])}
       if(hidden&&this.cfg.role==="gm"){c.globalAlpha=1;c.fillStyle="#0b0c11";c.font=`${Math.max(9/z,r*0.3)}px ${TH.mono}`;c.textAlign="center";c.fillText("HIDDEN",t.x,t.y-r*1.3)}
@@ -261,6 +271,9 @@ class MapView{
           c.fillStyle="#fff";c.strokeStyle=t.color;c.lineWidth=2/z;c.beginPath();c.rect(e.x-5/z,e.y-5/z,10/z,10/z);c.fill();c.stroke()}
         c.restore();
         const got=Tpl.caught(t,g,seen);got.forEach(k=>{if(!caughtBy.has(k.id))caughtBy.set(k.id,t.color)});tplInfo.push({t,got})}}
+    for(const t of toks){if(!t.auras||(t.hidden&&(playerView||this.cfg.role!=="gm"))||(playerView&&!mine(t)&&this.fogHides(m,t.x,t.y)))continue;
+      for(const a of Cond.cleanAuras(t.auras)){if(a.see==="gm"?(this.cfg.role!=="gm"||playerView):a.see==="owner"?!(mine(t)||(this.cfg.role==="gm"&&!playerView)):false)continue;
+        const R=Cond.auraR(g,t,a);c.save();c.beginPath();c.arc(t.x,t.y,R,0,Math.PI*2);c.fillStyle=a.color;c.globalAlpha=.1;c.fill();c.globalAlpha=.75;c.strokeStyle=a.color;c.lineWidth=2/z;c.setLineDash([10/z,7/z]);c.stroke();c.restore()}}
     toks.filter(t=>!(playerView&&mine(t))).forEach(drawTok);
     // fog
     if(m.fog&&m.fog.on&&(m.fog.shapes||[]).length){const fc=this.fogLayer(m);c.save();c.globalAlpha=playerView?1:0.55;c.imageSmoothingEnabled=true;c.drawImage(fc,0,0,m.w,m.h);c.restore()}
@@ -291,12 +304,21 @@ class MapView{
       c.font=`700 13px ${TH.font}`;const w=c.measureText(text).width+10;c.fillStyle=TH.labelBg;c.fillRect(Math.round(s.x-w/2),Math.round(s.y+3),Math.round(w),17);c.fillStyle=TH.accent;c.fillRect(Math.round(s.x-w/2),Math.round(s.y+3),2,17);
       c.fillStyle=TH.label;c.textAlign="center";c.textBaseline="middle";c.fillText(text,s.x,s.y+12)};
     labels.forEach(label);ownLabels.forEach(label);
+    for(const t of labels.concat(ownLabels)){if(!t.elev||(t.hidden&&this.cfg.role!=="gm")||(playerView&&!mine(t)&&this.fogHides(m,t.x,t.y)))continue;
+      const r=this.tokR(t),s=this.toScreen(t.x,t.y-r*1.02),text=`${t.elev>0?"↑":"↓"}${Math.abs(t.elev)} ${Grid.unit(g)}`;c.font=`600 11px ${TH.mono}`;const w=c.measureText(text).width+10;
+      c.fillStyle="rgba(8,9,14,.9)";c.fillRect(Math.round(s.x-w/2),Math.round(s.y-19),Math.round(w),16);c.fillStyle="#eef0f6";c.textAlign="center";c.textBaseline="middle";c.fillText(text,s.x,s.y-10.5)}
+    {const t=this.hover&&!this.drag?toks.find(x=>x.id===this.hover):null,text=t?Cond.describe(t):"";
+      if(text){const r=this.tokR(t),s=this.toScreen(t.x+r*1.35,t.y-r*0.4);c.font=`12px ${TH.font}`;const w=Math.min(c.measureText(text).width,320)+14;
+        c.fillStyle="rgba(8,9,14,.94)";c.fillRect(Math.round(s.x),Math.round(s.y-11),Math.round(w),22);c.fillStyle="#eef0f6";c.textAlign="left";c.textBaseline="middle";c.fillText(text,s.x+7,s.y,320)}}
     for(const {t,got} of tplInfo){const s=t.shape==="circle"?this.toScreen(t.x-10/z,t.y-t.size*Grid.size(g)):this.toScreen(t.x,t.y);if(s.x<-200||s.x>W+50||s.y<-20||s.y>H+60)continue;
       const text=Tpl.describe(t,g)+(got.length?` · ${got.length} caught`:"");
       c.font=`12px ${TH.mono}`;const w=c.measureText(text).width+14;c.fillStyle="rgba(8,9,14,.88)";c.fillRect(Math.round(s.x+10),Math.round(s.y-28),Math.round(w),20);
       c.fillStyle=t.color;c.fillRect(Math.round(s.x+10),Math.round(s.y-28),3,20);c.fillStyle="#eef0f6";c.textAlign="left";c.textBaseline="middle";c.fillText(text,s.x+17,s.y-18)}
     for(const r of rulers){const end=r.pts[r.pts.length-1];
-      const s=this.toScreen(end.x,end.y);const text=Grid.measure(g,r.pts).text+(r.name?" · "+r.name:"");
+      const s=this.toScreen(end.x,end.y);let ms=Grid.measure(g,r.pts);
+      if(g.height!==false){const at=q=>toks.find(t=>(t.elev||0)!==undefined&&!(t.hidden&&this.cfg.role!=="gm")&&Math.hypot(t.x-q.x,t.y-q.y)<=this.tokR(t)),ta=at(r.pts[0]),tb=at(end);
+        if(ta&&tb&&ta!==tb&&(ta.elev||0)!==(tb.elev||0))ms=Grid.lift(g,ms,(ta.elev||0)-(tb.elev||0))}
+      const text=ms.text+(r.name?" · "+r.name:"");
       c.font=`13px ${TH.mono}`;const w=c.measureText(text).width+14;c.fillStyle="rgba(8,9,14,.88)";c.fillRect(Math.round(s.x+10),Math.round(s.y-26),Math.round(w),22);
       c.fillStyle=r.color;c.fillRect(Math.round(s.x+10),Math.round(s.y-26),3,22);c.fillStyle="#eef0f6";c.textAlign="left";c.textBaseline="middle";c.fillText(text,s.x+17,s.y-15)}
     if(this.preview&&this.cfg.role==="gm"){c.font=`12px ${TH.mono}`;c.fillStyle=TH.previewBg;c.fillRect(12,12,190,24);c.fillStyle=TH.previewInk;c.textAlign="left";c.textBaseline="middle";c.fillText("PREVIEWING PLAYER VIEW",20,24)}

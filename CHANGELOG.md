@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0
+
+- **Conditions on tokens.** Right-click a token to mark it Stunned, Prone and so on. Badges show around
+  the token, and hovering lists them. A condition can last a number of rounds and comes off by itself.
+- **Height.** Give a token a height and it shows above it. The ruler counts the height difference
+  when you measure from one token to another.
+- **Auras.** The GM can give a token up to three rings that move with it, each with its own reach,
+  color and who sees it. The token panel lists who each one reaches.
+- Players can set conditions and height on their own tokens. The GM can turn that off in Map settings.
+- Games can bring their own conditions and set them from their rules.
+
 ## 1.3.0
 
 - **Area templates.** A new Template tool (T) lays a circle, cone, line or square on the map and rings

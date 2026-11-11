@@ -73,6 +73,13 @@ const Grid=(()=>{
     const noun=t==="none"?"":isHex(g)?"hex":"sq";
     const text=`${num(dist)} ${u}`+(noun?` · ${whole?cells:cells.toFixed(1)} ${noun}`:"");
     return {cells,dist,unit:u,counted:whole,text}}
+  /* the same measurement between two things at different heights (dz in the map's units): the straight
+     line on grids that measure one, and on counted grids a climb is paid like a diagonal */
+  function lift(g,res,dz){const v=Math.abs(Number(dz)||0)/per(g);if(!(v>0))return res;let cells;
+    if(!res.counted)cells=Math.hypot(res.cells,v);else if(isHex(g))cells=Math.round(Math.hypot(res.cells,v));
+    else{const a=Math.max(res.cells,v),b=Math.min(res.cells,v);cells=Math.round(diag(g)==="alternate"?a+Math.floor(b/2):a)}
+    const dist=cells*per(g),r=Math.round(dist*10)/10,n=res.counted?(Math.abs(r-Math.round(r))<.05?String(Math.round(r)):r.toFixed(1)):(r<10?r.toFixed(1):String(Math.round(r)));
+    return {...res,cells,dist,text:`${n} ${res.unit} with height`}}
 
   /* ---- drawing ---- */
   /* adds the grid's lines inside a world rectangle to the current path; the caller strokes it */
@@ -115,7 +122,7 @@ const Grid=(()=>{
     if(DIAGS.includes(d.diag))o.diag=d.diag;
     if(d.unit&&typeof d.unit==="object"){const n=Number(d.unit.n);if(n>0&&isFinite(n))o.m=n;const u=cleanUnit(d.unit.u);if(u)o.unit=u}
     return o}
-  return {TYPES,DIAGS,type,diag,size,isHex,per,unit,cleanUnit,counted,cell,center,corners,hexSteps,snap,snapMeasure,tokR,measure,path,around,describe,fitBox,defaults};
+  return {TYPES,DIAGS,type,diag,size,isHex,per,unit,cleanUnit,counted,cell,center,corners,hexSteps,snap,snapMeasure,tokR,measure,lift,path,around,describe,fitBox,defaults};
 })();
 /* kept for games that call it */
 function snapPoint(grid,x,y,size){return Grid.snap(grid,x,y,size)}

@@ -147,6 +147,29 @@ units; returns its id), `Monolith.map.removeTemplate(id)`, `Monolith.map.templat
 `Monolith.map.caught(id)` (the tokens inside). Players can place and remove their own templates
 unless the GM turns that off in Map settings.
 
+**Conditions, height and auras** (1.4.0). A token can carry status badges (with an optional number
+of rounds), a height above the ground, and up to three auras that move with it. Right-clicking a
+token opens its menu; the GM's token panel has the same controls plus auras. A game supplies its
+own conditions, again as optional data in `map`:
+
+```js
+map:{
+  conditions:[{id:"stunned", name:"Stunned", color:"#f2a93b",
+               icon:"M12 3.5l2.4 5.6 6.1.5-4.6 4 1.4 6-5.3-3.2-5.3 3.2 1.4-6-4.6-4 6.1-.5z"}],
+                        // icon: SVG path data for a 24×24 box, drawn as a white line; only path
+                        // commands and numbers are accepted. Without one the badge shows letters.
+  auraFrom:"edge",      // auras reach from the token's "edge" (default) or its "centre"
+}
+```
+
+Without a list, tokens get a small default set (Down, Stunned, Prone, Hiding, Marked). On the GM's
+side a game can drive them from its rules: `Monolith.map.tokens()` (each with `id`, `ref`, `conds`,
+`elev`), `Monolith.map.setCondition(token, id, on, rounds)`, `Monolith.map.hasCondition(token, id)`,
+`Monolith.map.setElevation(token, height)` and `Monolith.map.endRound()`, which counts timed
+conditions down by one and notes in the log when one runs out. `token` is a token id or `{ref}`
+(the character or NPC it stands for). Call `endRound()` when your turn tracker starts a new round.
+Players can set conditions and height on their own tokens unless the GM turns that off.
+
 **3D dice.** When someone rolls, the dice the roll used are thrown across their own screen (a small
 physics simulation: they bounce off the window's edges and each other) and land on the rolled numbers; other people at the table get only the result. Every die rolled with the core's
 `d(n)` in the same moment as a `Dice.push` (including `Dice.raw` and `Dice.expr`) is shown, so games

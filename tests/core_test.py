@@ -169,6 +169,51 @@ async def main():
         await gm.click("[data-act=tpl-clear]");await gm.wait_for_timeout(300)
         ok(await gm.evaluate("curMap().templates.length")==0 and await pl.evaluate("Net.scene.templates.length")==0,"Clear all removes every template for everyone")
         await gm.evaluate("delete GAME.map");await gm.click("[data-act=map-tool][data-t=select]");await pl.click("[data-act=map-tool][data-t=select]")
+        # token states (tokens.js): conditions with rounds, height, auras
+        bad=await gm.evaluate("""(()=>{const bad=[],ok=(c,m)=>{if(!c)bad.push(m)};
+          ok(Cond.list().length===5&&Cond.get('stunned').name==='Stunned','the default conditions');
+          const t={id:'x',x:0,y:0,size:1};Cond.apply(t,{cond:{id:'stunned',rounds:2}});Cond.apply(t,{cond:{id:'prone'}});Cond.apply(t,{cond:{id:'nope'}});
+          ok(JSON.stringify(t.conds)==='[{"id":"stunned","rounds":2},{"id":"prone"}]'&&Cond.describe(t)==='Stunned (2 rounds), Prone','add and describe: '+JSON.stringify(t.conds));
+          Cond.apply(t,{cond:{id:'stunned',on:false}});Cond.apply(t,{cond:{id:'prone',on:false}});ok(!('conds' in t),'remove');
+          Cond.apply(t,{elev:'30.26'});ok(t.elev===30.3,'height');Cond.apply(t,{elev:0});ok(!('elev' in t),'height back to the ground');
+          Cond.apply(t,{auras:[{r:10},{r:-1},{r:5,color:'red',see:'x'},{r:1},{r:2}]});ok(t.auras.length===3&&t.auras[1].color==='#f2a93b'&&t.auras[1].see==='all','auras cleaned, three at most');
+          const g={size:70,m:5,unit:'ft'};ok(Cond.auraR(g,{size:1},{r:10})===175&&Cond.auraCatches(g,{id:'a',x:0,y:0,size:1},{r:10},[{id:'b',x:170,y:0,size:1},{id:'c',x:180,y:0,size:1}]).map(k=>k.id).join()==='b','an aura reaches from the token edge');
+          GAME.map={conditions:[{id:'on fire',name:'On fire',color:'#ff7a3c',icon:'M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z'},{id:'bad',name:'Bad',icon:'M0 0<script>'},{id:'bad',name:'Twice'},{name:'no id'}],auraFrom:'centre'};
+          const L=Cond.list();ok(L.length===2&&L[0].id==='onfire'&&L[0].icon&&L[1].icon===''&&L[1].color==='#8b8f9c','a game list is cleaned: '+JSON.stringify(L.map(c=>[c.id,!!c.icon])));
+          ok(Cond.auraR(g,{size:1},{r:10})===140,'or from its centre');delete GAME.map;ok(Cond.list().length===5,'back to the defaults');
+          let r=Grid.measure({size:70,m:5,unit:'ft',diag:'one'},[{x:35,y:35},{x:735,y:35}]);ok(Grid.lift({size:70,m:5,unit:'ft',diag:'one'},r,30).text==='50 ft with height'&&Grid.lift({size:70,m:5,unit:'ft',diag:'one'},r,80).text==='80 ft with height','height on a counted grid');
+          r=Grid.measure({size:70,m:2},[{x:0,y:0},{x:105,y:0}]);ok(Grid.lift({size:70,m:2},r,4).text==='5.0 m with height','height in a straight line: '+Grid.lift({size:70,m:2},r,4).text);
+          return bad})()""")
+        ok(bad==[],"token state maths: conditions, height, auras and measuring with height"+(": "+"; ".join(bad[:4]) if bad else ""))
+        ids=await gm.evaluate("(()=>{const m=curMap(),p=freeSpot(m,700,700);m.tokens.push({id:'npc1',kind:'npc',label:'Guard',color:'#c8102e',size:1,x:p.x,y:p.y,hidden:false,owner:null});save();MapV.invalidate();return [m.tokens[0].id,m.tokens[0].owner]})()")
+        async def rclick(pg,view,tid):
+            a=await pg.evaluate("([v,id])=>{const V=v==='gm'?MapV:PMapV,t=V.map.tokens.find(x=>x.id===id),r=V.canvas.getBoundingClientRect(),s=V.toScreen(t.x,t.y);return [r.left+s.x,r.top+s.y]}",[view,tid])
+            await pg.mouse.click(a[0],a[1],button="right");await pg.wait_for_timeout(250)
+        await rclick(gm,"gm","npc1")
+        ok(await gm.locator(".tokmenu").count()==1 and "Guard" in await gm.locator(".tokmenu").text_content(),"right-clicking a token opens its menu")
+        await gm.click(".tokmenu [data-act=tk-cond][data-c=stunned]");await gm.wait_for_timeout(150)
+        await gm.fill(".tokmenu [data-act-change=tk-cond-rounds][data-c=stunned]","1");await gm.press(".tokmenu [data-act-change=tk-cond-rounds][data-c=stunned]","Enter")
+        await gm.fill(".tokmenu [data-act-change=tk-elev]","20");await gm.press(".tokmenu [data-act-change=tk-elev]","Enter");await gm.wait_for_timeout(450)
+        x=await pl.evaluate("(()=>{const t=Net.scene.tokens.find(t=>t.id==='npc1');return [t.conds,t.elev]})()")
+        ok(x==[[{"id":"stunned","rounds":1}],20],"the GM sets a timed condition and a height, and players see them: "+str(x))
+        n=await gm.evaluate("Monolith.map.endRound()");await gm.wait_for_timeout(400)
+        ok(n==1 and await gm.evaluate("!curMap().tokens.find(t=>t.id==='npc1').conds&&st.tableLog.slice(-1)[0].text")=="Guard is no longer stunned." and await pl.evaluate("!Net.scene.tokens.find(t=>t.id==='npc1').conds"),"ending a round counts timed conditions down, and the log says when one runs out")
+        await gm.mouse.click(5,300);await gm.keyboard.press("Escape")
+        ok(ids[1] and await pl.evaluate("id=>Net.scene.tokens.find(t=>t.id===id).owner===PID",ids[0]),"(the player owns the first token)")
+        await rclick(pl,"pl",ids[0])
+        await pl.click(".tokmenu [data-act=tk-cond][data-c=prone]");await pl.wait_for_timeout(400)
+        ok(await gm.evaluate("id=>JSON.stringify(curMap().tokens.find(t=>t.id===id).conds)",ids[0])=='[{"id":"prone"}]',"a player sets a condition on their own token")
+        await pl.click(".tokmenu [data-act=tk-menu-close]");await rclick(pl,"pl","npc1")
+        await pl.evaluate("id=>{netSend({t:'tokset',id:'npc1',p:{cond:{id:'down'}}});netSend({t:'tokset',id,p:{auras:[{r:50}],elev:15}})}",ids[0]);await pl.wait_for_timeout(400)
+        x=await gm.evaluate("id=>{const T=curMap().tokens,a=T.find(t=>t.id==='npc1'),b=T.find(t=>t.id===id);return [!!a.conds,!!b.auras,b.elev]}",ids[0])
+        ok(x==[False,False,15] and await pl.locator(".tokmenu").count()==0,"but not on anyone else's, and players can't add auras: "+str(x))
+        await gm.evaluate("st.host.playersConditions=false;Host.lastScene='';save()");await gm.wait_for_timeout(400)
+        await pl.evaluate("id=>netSend({t:'tokset',id,p:{cond:{id:'down'}}})",ids[0]);await rclick(pl,"pl",ids[0])
+        ok(await gm.evaluate("id=>curMap().tokens.find(t=>t.id===id).conds.length",ids[0])==1 and await pl.locator(".tokmenu").count()==0,"the GM can turn players' conditions off")
+        await gm.evaluate("id=>{st.host.playersConditions=true;const T=curMap().tokens,b=T.find(t=>t.id===id);Cond.apply(b,{auras:[{r:10,see:'all'},{r:20,see:'gm'}]});Host.lastScene='';save()}",ids[0]);await gm.wait_for_timeout(400)
+        ok(await pl.evaluate("id=>Net.scene.tokens.find(t=>t.id===id).auras.map(a=>a.r).join()",ids[0])=="10","a GM-only aura never reaches players")
+        ok(await gm.evaluate("id=>Monolith.map.setCondition('npc1','marked',true,3)&&Monolith.map.hasCondition('npc1','marked')&&Monolith.map.setCondition('npc1','marked',false)&&!Monolith.map.hasCondition('npc1','marked')&&!Monolith.map.setCondition('npc1','nope',true)&&Monolith.map.tokens().length>=2",ids[0]),"a game sets and reads conditions from its rules")
+        await gm.evaluate("id=>{const m=curMap();m.tokens=m.tokens.filter(t=>t.id!=='npc1');const b=m.tokens.find(t=>t.id===id);delete b.conds;delete b.auras;delete b.elev;save();render();MapV.invalidate()}",ids[0])
         ok(await gm.evaluate("appOlder('1.1.9',MONOLITH_VERSION)&&appOlder(undefined,MONOLITH_VERSION)&&!appOlder(MONOLITH_VERSION,MONOLITH_VERSION)&&!appOlder('99.0.0',MONOLITH_VERSION)"),"version comparison for the join check")
         why=await pl.evaluate("""new Promise(res=>{const ws=new WebSocket(Net.url.replace(/^http/i,'ws')+'/ws');
           ws.onopen=()=>ws.send(JSON.stringify({...helloMsg({character:null,peek:true}),app:'1.1.1',playerId:'old-app'}));

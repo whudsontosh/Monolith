@@ -92,10 +92,14 @@ function gameSend(type,data){netSend({...(data||{}),t:"game",game:GAME_INFO.id,t
 let PMapV=null;
 function initPlayerMap(){if(PMapV)return;PMapV=new MapView({role:"player",getMap:()=>Net.state==="online"||Net.state==="reconnecting"?Net.scene:null,
   canMove:t=>t.owner===PID&&Net.scene&&Net.scene.settings&&Net.scene.settings.playersMove!==false&&Net.state==="online",
-  canErase:d=>d.by===PID,canTpl:t=>t.by===PID&&playerCanTpl(),canPlaceTpl:playerCanTpl,onEvent:playerMapEvent,imgUrl:assetUrl,me:()=>({color:myColor(),name:Net.name,playerId:PID}),ringFor:t=>t.ring,activeTok:()=>Net.scene&&Net.scene.active})}
+  canErase:d=>d.by===PID,canTpl:t=>t.by===PID&&playerCanTpl(),canPlaceTpl:playerCanTpl,canState:playerCanState,onEvent:playerMapEvent,imgUrl:assetUrl,me:()=>({color:myColor(),name:Net.name,playerId:PID}),ringFor:t=>t.ring,activeTok:()=>Net.scene&&Net.scene.active})}
 function playerCanTpl(){return !!(Net.scene&&Net.scene.settings&&Net.scene.settings.playersTemplates!==false&&Net.state==="online")}
+function playerCanState(t){return !!(t&&t.owner===PID&&Net.scene&&Net.scene.settings&&Net.scene.settings.playersConditions!==false&&Net.state==="online")}
+/* a player changes their own token: shown at once, and the GM is asked to make it so */
+function tokPatch(id,p){const sc=Net.scene,t=sc&&sc.tokens.find(x=>x.id===id);if(!t||!playerCanState(t))return;if(!Cond.apply(t,p))return;netSend({t:"tokset",id,p});if(PMapV)PMapV.invalidate();render()}
 function playerMapEvent(type,d){const sc=Net.scene;if(!sc)return;
   switch(type){
+    case "token-menu":if(d||ui.tokMenu){ui.tokMenu=d;render()}return;
     case "tpl-add":d.by=PID;if(!Array.isArray(sc.templates))sc.templates=[];sc.templates.push(d);netSend({t:"tpl",op:"add",d});PMapV.invalidate();requestRender();return;
     case "tpl-set":netSend({t:"tpl",op:"set",id:d.id,d});requestRender();return;
     case "tpl-del":{const L=sc.templates||[],i=L.findIndex(x=>x.id===d&&x.by===PID);if(i>=0){L.splice(i,1);netSend({t:"tpl",op:"del",id:d});PMapV.invalidate();requestRender()}return}
@@ -123,7 +127,7 @@ function viewTable(){
     `<button class="mtool" data-act="pmap-find" title="Find my token">${icon("select")}</button>`].join("");
   const sub=sc&&tool==="draw"?inkBar(PMapV,true):sc&&tool==="template"?tplBar(PMapV,sc,false):"";
   const banner=Net.state==="reconnecting"?`<div class="map-banner">Reconnecting to the table…</div>`:Net.gmAway?`<div class="map-banner">The GM's app is offline. Waiting for them to come back…</div>`:"";
-  const stage=`<div class="map-stage"><div class="map-slot" id="map-slot" data-keep></div>${sub}${banner}${!sc?`<div class="map-empty"><h3>No map yet</h3><p>The GM hasn't put a map on the table. You can still chat and roll.</p></div>`:""}</div>`;
+  const stage=`<div class="map-stage"><div class="map-slot" id="map-slot" data-keep></div>${sub}${sc&&ui.tokMenu?tokMenuHTML(sc.tokens.find(t=>t.id===ui.tokMenu.id&&playerCanState(t)),sc.grid,ui.tokMenu):""}${banner}${!sc?`<div class="map-empty"><h3>No map yet</h3><p>The GM hasn't put a map on the table. You can still chat and roll.</p></div>`:""}</div>`;
   let mine="";
   if(c){let inner="";try{inner=RS.player&&RS.player.tablePanel?RS.player.tablePanel(c):""}catch(e){console.error(e)}
     if(!inner){const k=RS.character.card(c);inner=`<div class="row" style="justify-content:space-between"><h3>${esc(k.name)}</h3>${(k.chips||[]).map(x=>`<span class="chip ${esc(x.c||"ink")}">${esc(x.t)}</span>`).join("")}</div><div class="row"><button class="btn sm ghost" data-act="open-char" data-id="${esc(c.id)}">Open</button></div>`}

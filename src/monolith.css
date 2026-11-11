@@ -277,3 +277,16 @@ details.ms[open] summary::after{content:"−"}
 .rg{display:contents}
 .panel,.card{contain:layout style}
 }
+
+/* token states (1.4): condition toggles, the height field, the right-click menu, aura rows */
+.tks{display:grid;gap:8px}
+.tks-c{display:flex;flex-wrap:wrap;gap:5px}
+.tks-i{display:inline-flex;align-items:stretch;border:1px solid var(--line2)}
+.tks-i button{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:inherit;padding:3px 8px 3px 3px;font-size:12.5px}
+.tks-i button i{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;color:#fff;font-style:normal;font-size:10px;font-weight:700}
+.tks-i.on{border-color:var(--ink);background:rgba(255,255,255,.1)}
+.tks .tks-i input{width:3.2em!important;flex:none;min-height:0;padding:2px 4px;border:0;border-left:1px solid var(--line2);font-size:12.5px;text-align:center;background:transparent;color:inherit}
+.tks-e{display:flex;align-items:center;gap:6px;font-size:12.5px}
+.tks .tks-e input{width:5.5em!important;flex:none;min-height:0;padding:3px 6px}
+.tokmenu{position:absolute;z-index:6;display:grid;gap:8px;width:min(330px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;padding:10px;background:rgba(0,0,0,.95);border:1px solid var(--line2);color:#eef0f6;transform:translate(8px,8px)}
+.tka{display:grid;gap:6px;padding:8px 0;border-top:1px solid var(--line)}
