@@ -71,6 +71,60 @@ async def main():
         await pl.check("[data-act-change=dice3d]");await pl.click("[data-act=toggle-tray]")
         await pl.fill("#chat-in","hello");await pl.press("#chat-in","Enter");await pl.wait_for_timeout(300)
         ok(await gm.evaluate("st.tableLog.some(e=>e.kind==='chat'&&e.text==='hello')"),"chat works")
+        # the grid (grid.js): hexes, diagonal rules, measuring, snapping
+        bad=await gm.evaluate("""(()=>{const bad=[],ok=(c,m)=>{if(!c)bad.push(m)};
+          for(const type of ['hex-flat','hex-pointy','square']){const g={type,size:70,ox:13,oy:-22};
+            for(let q=-5;q<=5;q++)for(let r=-5;r<=5;r++){const m=Grid.center(g,{q,r}),c=Grid.cell(g,m.x,m.y);ok(c.q===q&&c.r===r,type+' cell of its own middle');
+              for(let k=0;k<6;k++){const c2=Grid.cell(g,m.x+Math.cos(k*1.1)*30,m.y+Math.sin(k*1.1)*30);ok(c2.q===q&&c2.r===r,type+' points near the middle')}}
+            if(type!=='square'){const a=Grid.center(g,{q:0,r:0});for(const [dq,dr] of [[1,0],[0,1],[-1,1],[-1,0],[0,-1],[1,-1]]){const b=Grid.center(g,{q:dq,r:dr});ok(Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-70)<1e-9,type+' neighbours one size apart')}
+              const f=Grid.corners({type,size:70},{q:0,r:0});ok(Math.abs(Math.min(...f.map(p=>p.x)))<1e-9&&Math.abs(Math.min(...f.map(p=>p.y)))<1e-9,type+' first hex in the corner')}}
+          const P=(g,c)=>Grid.center(g,c);let g={type:'hex-pointy',size:50},r;
+          ok(Grid.measure(g,[P(g,{q:0,r:0}),P(g,{q:3,r:-1})]).cells===3&&Grid.measure(g,[P(g,{q:0,r:0}),P(g,{q:2,r:2})]).cells===4,'hex steps');
+          g={size:50,diag:'one',m:5,unit:'ft'};r=Grid.measure(g,[P(g,{q:0,r:0}),P(g,{q:4,r:3})]);ok(r.text==='20 ft · 4 sq','diagonals as one: '+r.text);
+          g={size:50,diag:'alternate',m:5,unit:'ft'};r=Grid.measure(g,[P(g,{q:0,r:0}),P(g,{q:4,r:3})]);ok(r.text==='25 ft · 5 sq','alternating: '+r.text);
+          ok(Grid.measure(g,[P(g,{q:0,r:0}),P(g,{q:1,r:1}),P(g,{q:2,r:2})]).cells===3,'alternating carries across a corner');
+          r=Grid.measure({size:70},[{x:0,y:0},{x:210,y:280}]);ok(r.text==='10 m · 5.0 sq','a map from before: '+r.text);
+          r=Grid.measure({size:70,type:'none',m:1},[{x:0,y:0},{x:35,y:0}]);ok(r.text==='0.5 m','no grid: '+r.text);
+          ok(JSON.stringify(snapPoint({size:70},100,100,1))==='{"x":105,"y":105}'&&JSON.stringify(snapPoint({size:70},100,100,2))==='{"x":70,"y":70}','square snapping unchanged');
+          g={type:'hex-flat',size:70};let s=Grid.snap(g,200,200,2),c=Grid.cell(g,200,200);ok(Grid.corners(g,c).some(p=>Math.hypot(p.x-s.x,p.y-s.y)<1e-9),'even sizes on a hex corner');
+          s=Grid.snap(g,200,200,3);ok(Math.hypot(s.x-Grid.center(g,c).x,s.y-Grid.center(g,c).y)<1e-9,'odd sizes on a hex middle');
+          ok(Grid.snap({type:'none'},12.5,7,1).x===12.5,'no grid, no snap');
+          ok(Grid.around({type:'hex-flat',size:70},300,300,2).length===19&&Grid.around({size:70},300,300,2).length===25,'places around a point');
+          ok(Grid.describe({size:70},2100,1400)==='30×20 squares'&&Grid.unit({unit:'<b>ft'})==='bft'&&Grid.unit({})==='m'&&Grid.type({type:'x'})==='square','labels and cleaning');
+          const f=Grid.fitBox({type:'square'},130,95,340,305,3);ok(f.size===70&&f.ox===60&&f.oy===25,'fit from a box');
+          return bad})()""")
+        ok(bad==[],"grid maths: hex cells, the three diagonal rules, snapping and units"+(": "+"; ".join(bad[:4]) if bad else ""))
+        g0=await gm.evaluate("JSON.stringify(curMap().grid)")
+        await gm.evaluate("ui.mapSettingsOpen=true;render()")
+        await gm.select_option("#mm-type","hex-flat");await gm.wait_for_timeout(500)
+        ok(await pl.evaluate("Net.scene.grid.type")=="hex-flat" and await gm.locator("#mm-diag").count()==0,"the GM switches a map to hexes and players get it")
+        pos=await gm.evaluate("(()=>{const m=curMap(),t=m.tokens[0],s=MapV.toScreen(t.x,t.y),r=MapV.canvas.getBoundingClientRect();return [r.left+s.x,r.top+s.y]})()")
+        await gm.mouse.move(pos[0],pos[1]);await gm.mouse.down();await gm.mouse.move(pos[0]+43,pos[1]+27,steps=4);await gm.mouse.up();await gm.wait_for_timeout(300)
+        ok(await gm.evaluate("(()=>{const m=curMap(),t=m.tokens[0],c=Grid.center(m.grid,Grid.cell(m.grid,t.x,t.y));return Math.hypot(c.x-t.x,c.y-t.y)<1})()"),"a dragged token comes to rest on the middle of a hex")
+        await gm.click("[data-act=map-tool][data-t=ruler]");await gm.wait_for_timeout(100)
+        r=await gm.evaluate("(()=>{const r=MapV.canvas.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()")
+        await gm.keyboard.down("Shift");await gm.mouse.click(r[0]-120,r[1]-60);await gm.mouse.click(r[0],r[1]-60);await gm.keyboard.up("Shift")
+        await gm.mouse.move(r[0],r[1]+70,steps=3);await gm.wait_for_timeout(250)
+        x=await gm.evaluate("({n:MapV.ruler.pts.length,path:MapV.ruler.path,m:Grid.measure(curMap().grid,MapV.ruler.pts)})")
+        ok(x["n"]==3 and x["path"] and x["m"]["counted"] and x["m"]["cells"]==int(x["m"]["cells"])>0 and x["m"]["text"].endswith(" hex"),"Shift+click measures around a corner, in whole hexes: "+x["m"]["text"])
+        v=await pl.evaluate("typeof PMapV!=='undefined'&&PMapV?Object.values(PMapV.remoteRulers).map(r=>(r.via||[]).length)[0]:-1")
+        ok(v in (2,-1),"players see the measured path with its corner")
+        await gm.mouse.click(r[0],r[1]+70);await gm.wait_for_timeout(100)
+        ok(await gm.evaluate("MapV.ruler&&MapV.ruler.path===false"),"a plain click ends the path")
+        await gm.click("[data-act=map-tool][data-t=select]")
+        await gm.select_option("#mm-type","square");await gm.wait_for_timeout(100);await gm.select_option("#mm-diag","one");await gm.fill("#mm-m","5");await gm.fill("#mm-unit","ft");await gm.wait_for_timeout(500)
+        ok(await pl.evaluate("Grid.measure(Net.scene.grid,[{x:35,y:35},{x:315,y:245}]).text")=="20 ft · 4 sq","units and the diagonal rule reach players")
+        await gm.fill("#mm-fitn","2");await gm.click("[data-act=mm-fit]");await gm.wait_for_timeout(100)
+        a=await gm.evaluate("(()=>{const r=MapV.canvas.getBoundingClientRect(),p=MapV.toScreen(100,60),q=MapV.toScreen(260,220);return [r.left+p.x,r.top+p.y,r.left+q.x,r.top+q.y]})()")
+        await gm.mouse.move(a[0],a[1]);await gm.mouse.down();await gm.mouse.move(a[2],a[3],steps=3);await gm.mouse.up();await gm.wait_for_timeout(200)
+        f=await gm.evaluate("curMap().grid")
+        ok(abs(f["size"]-80)<1.5 and abs(f["ox"]-20)<2 and abs(f["oy"]-60)<2 and await gm.evaluate("ui.mapTool")=="select","dragging a box across 2 squares aligns the grid to the picture: "+str([f["size"],f["ox"],f["oy"]]))
+        await gm.evaluate("g=>{Object.assign(curMap().grid,JSON.parse(g));delete curMap().grid.type;save();render();MapV.invalidate()}",g0)
+        ok(await gm.evaluate("appOlder('1.1.9',MONOLITH_VERSION)&&appOlder(undefined,MONOLITH_VERSION)&&!appOlder(MONOLITH_VERSION,MONOLITH_VERSION)&&!appOlder('99.0.0',MONOLITH_VERSION)"),"version comparison for the join check")
+        why=await pl.evaluate("""new Promise(res=>{const ws=new WebSocket(Net.url.replace(/^http/i,'ws')+'/ws');
+          ws.onopen=()=>ws.send(JSON.stringify({...helloMsg({character:null,peek:true}),app:'1.1.1',playerId:'old-app'}));
+          ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.t==='kicked')res(m.reason)};setTimeout(()=>res('no answer'),3000)})""")
+        ok("Update Monolith" in why,"a player on an older Monolith is told to update before joining: "+why)
         await gm.click("nav [data-act=tab][data-t=party]");await gm.wait_for_timeout(200)
         ok(await gm.locator(".card:has-text('Wren')").count()==1,"party shows game cards when the game has no party table")
         await gm.evaluate("()=>{ui.rmId=st.party[0].id;ui.modal='remove-pc';renderModal()}");await gm.wait_for_timeout(150)

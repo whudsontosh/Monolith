@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+- **Hex maps and maps with no grid.** Pick squares, hexes (flat or pointed top) or no grid in Map
+  settings. Tokens snap to hexes, and the ruler counts them.
+- **Diagonal rules for square grids:** straight line (as before), every diagonal counts as one square,
+  or 1, 2, 1, 2. Games can set their own default.
+- **Your own units.** A square or hex can be worth any number of any unit, such as 5 ft or 2 m.
+- **Measure around corners.** With the ruler, Shift+click drops a point; a plain click ends the path.
+- **Align the grid to a map picture** by drawing a box across a few of its squares or hexes.
+- A player on an older Monolith than the GM is now asked to update before joining.
+
+Maps you already have don't change.
+
 ## 1.1.1
 
 - **Real dice physics.** Your dice are thrown from the dice button and fly, bounce, roll and knock into

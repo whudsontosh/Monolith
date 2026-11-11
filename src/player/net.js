@@ -22,7 +22,7 @@ function netConnect(code,name,charId){
   saveLastJoin({code,name:Net.name,charId});
   openSocket();
 }
-function helloMsg(extra){return {t:"hello",v:2,password:Net.pass,playerId:PID,name:Net.name,game:{id:GAME_INFO.id,version:GAME_INFO.version,ruleset:rulesetId()},...extra}}
+function helloMsg(extra){return {t:"hello",v:2,app:MONOLITH_VERSION,password:Net.pass,playerId:PID,name:Net.name,game:{id:GAME_INFO.id,version:GAME_INFO.version,ruleset:rulesetId()},...extra}}
 function openSocket(){
   clearTimeout(Net.retryT);if(Net.ws){try{Net.ws.onclose=null;Net.ws.close()}catch(e){}}
   Net.state=Net.retry?"reconnecting":"connecting";render();
@@ -112,7 +112,7 @@ function afterRender(){
 function viewTable(){
   if(Net.state==="off"||Net.state==="connecting"&&!Net.scene)return joinView();
   const sc=Net.scene;const tool=ui.pTool||"select";const c=myChar();
-  const tools=[toolBtn("select",tool,"select","Select & move your token (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R)"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
+  const tools=[toolBtn("select",tool,"select","Select & move your token (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R). Shift+click to measure around corners"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
     `<div class="mtool-sep"></div>`,`<button class="mtool" data-act="pmap-zoom" data-v="in" title="Zoom in (+)">${icon("zin")}</button>`,`<button class="mtool" data-act="pmap-zoom" data-v="out" title="Zoom out (−)">${icon("zout")}</button>`,`<button class="mtool" data-act="pmap-zoom" data-v="fit" title="Fit map (0)">${icon("fit")}</button>`,
     `<button class="mtool" data-act="pmap-find" title="Find my token">${icon("select")}</button>`].join("");
   const sub=sc&&tool==="draw"?inkBar(PMapV,true):"";

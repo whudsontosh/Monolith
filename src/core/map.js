@@ -1,6 +1,7 @@
 
 /* ============================== MONOLITH CORE: MAP ENGINE ============================== */
 /* A canvas battle map in the spirit of Owlbear Rodeo: image + grid, tokens, fog, drawings, ruler, pings.
+   The grid's own maths (square, hex, none; snapping; distance) lives in grid.js.
    World units are map-image pixels. The view never owns game state: it reads cfg.getMap() and reports
    what the user did through cfg.onEvent(type, data); the GM applies it, players send it to the GM. */
 /* map look: games can restyle it with Monolith.theme.map */
@@ -8,11 +9,8 @@ function mapTheme(){const t=Monolith.theme.map||{};return {void:t.void||"#030303
   mono:t.mono||'"JetBrains Mono",ui-monospace,monospace',select:t.select||"#ffffff",accent:t.accent||"#ffffff",label:t.label||"#f4f4f2",labelBg:t.labelBg||"rgba(3,3,3,.84)",previewBg:t.previewBg||"rgba(255,255,255,.92)",previewInk:t.previewInk||"#050505"}}
 const INK_COLORS=["#ff4459","#f2a93b","#ffe14d","#4cc98c","#38d6f0","#7d95ff","#c77dff","#ffffff"];
 const TOKEN_COLORS=["#c8102e","#2346d1","#18744a","#a76200","#6c2bd9","#0e7c86","#b3127a","#3d4352","#111318","#d9dbe3"];
-function snapPoint(grid,x,y,size){const s=Math.max(4,Number(grid.size)||70),ox=Number(grid.ox)||0,oy=Number(grid.oy)||0;
-  if((size||1)%2===1)return {x:ox+(Math.floor((x-ox)/s)+0.5)*s,y:oy+(Math.floor((y-oy)/s)+0.5)*s};
-  return {x:ox+Math.round((x-ox)/s)*s,y:oy+Math.round((y-oy)/s)*s}}
 function newMapData(o){return {id:uid(),name:o.name||"New map",asset:o.asset||null,w:o.w||2100,h:o.h||1400,bg:o.bg||"#1d2029",
-  grid:{size:o.size||70,ox:0,oy:0,show:true,snap:true,color:"#ffffff",alpha:0.22,m:2},tokens:[],drawings:[],fog:{on:true,shapes:[]},created:Date.now()}}
+  grid:{size:o.size||70,ox:0,oy:0,show:true,snap:true,color:"#ffffff",alpha:0.22,...Grid.defaults()},tokens:[],drawings:[],fog:{on:true,shapes:[]},created:Date.now()}}
 function segDist(px,py,ax,ay,bx,by){const dx=bx-ax,dy=by-ay;const l=dx*dx+dy*dy;let t=l?((px-ax)*dx+(py-ay)*dy)/l:0;t=Math.max(0,Math.min(1,t));const x=ax+t*dx,y=ay+t*dy;return Math.hypot(px-x,py-y)}
 function inPoly(x,y,p){let c=false;for(let i=0,j=p.length-2;i<p.length;j=i,i+=2){const xi=p[i],yi=p[i+1],xj=p[j],yj=p[j+1];if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi))c=!c}return c}
 
@@ -57,8 +55,8 @@ class MapView{
   toWorld(sx,sy){return {x:sx/this.cam.z+this.cam.x,y:sy/this.cam.z+this.cam.y}}
   toScreen(wx,wy){return {x:(wx-this.cam.x)*this.cam.z,y:(wy-this.cam.y)*this.cam.z}}
   pt(e){const r=this.canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
-  setTool(t){this.tool=t;this.poly=null;this.cur=null;this.canvas.style.cursor=t==="pan"?"grab":t==="select"?"default":"crosshair";this.invalidate()}
-  tokR(t){const g=this.map.grid;return (Number(t.size)||1)*(Number(g.size)||70)/2}
+  setTool(t){this.tool=t;this.poly=null;this.cur=null;if(this.ruler&&this.ruler.path)this.endRuler(0);this.canvas.style.cursor=t==="pan"?"grab":t==="select"?"default":"crosshair";this.invalidate()}
+  tokR(t){return Grid.tokR(this.map.grid,t.size)}
   visibleTokens(){const m=this.map;return (m.tokens||[])}
   hitToken(w){const ts=this.visibleTokens();for(let i=ts.length-1;i>=0;i--){const t=ts[i];if(this.cfg.role!=="gm"&&t.hidden)continue;if(Math.hypot(w.x-t.x,w.y-t.y)<=this.tokR(t))return t}return null}
   hitDrawing(w){const m=this.map;const tol=8/this.cam.z;const ds=m.drawings||[];
@@ -84,7 +82,12 @@ class MapView{
         this.invalidate();return}
       if(this.sel){this.sel=null;this.emit("select",null)}
       this.drag={k:"pan",sx:p.x,sy:p.y,cx:this.cam.x,cy:this.cam.y};this.canvas.style.cursor="grabbing";this.invalidate();return}
-    if(t==="ruler"){this.ruler={a:w,b:w};this.drag={k:"ruler"};this.emitRuler(true);this.invalidate();return}
+    if(t==="ruler"){const q=Grid.snapMeasure(m.grid,w.x,w.y);clearTimeout(this.rulerT);
+      // Shift+click measures around corners: each Shift+click drops a point, a plain click ends the path
+      if(e.shiftKey){if(this.ruler&&this.ruler.path){const P=this.ruler.pts;P[P.length-1]=q;if(P.length<13)P.push(q)}else this.ruler={path:true,pts:[q,q]};this.emitRuler(true);this.invalidate();return}
+      if(this.ruler&&this.ruler.path){const P=this.ruler.pts;P[P.length-1]=q;this.emitRuler(true);this.endRuler(2600);this.invalidate();return}
+      this.ruler={pts:[q,q]};this.drag={k:"ruler"};this.emitRuler(true);this.invalidate();return}
+    if(t==="grid-fit"){this.drag={k:"fitrect",a:w,b:w};return}
     if(t==="draw"){
       if(this.drawMode==="erase"){const d=this.hitDrawing(w);if(d&&this.cfg.canErase(d))this.emit("draw-del",{id:d.id});this.drag={k:"erase"};return}
       this.cur={id:uid(),type:this.drawMode,color:this.inkColor,w:Math.max(0.5,this.inkWidth/this.cam.z),pts:[w.x,w.y,w.x,w.y]};this.drag={k:"draw"};this.invalidate();return}
@@ -97,6 +100,7 @@ class MapView{
   move(e){
     const p=this.pt(e),w=this.toWorld(p.x,p.y);this.mouse=w;const d=this.drag;const m=this.map;
     if(!d){if(this.poly)this.invalidate();
+      if(this.ruler&&this.ruler.path&&m){const P=this.ruler.pts;P[P.length-1]=Grid.snapMeasure(m.grid,w.x,w.y);this.emitRuler(false);this.invalidate()}
       if(this.tool==="select"&&m){const tok=this.hitToken(w);const id=tok?tok.id:null;if(id!==this.hover){this.hover=id;this.canvas.style.cursor=tok&&this.cfg.canMove(tok)?"grab":"default";this.invalidate()}}
       return}
     if(d.k==="pan"){this.cam.x=d.cx-(p.x-d.sx)/this.cam.z;this.cam.y=d.cy-(p.y-d.sy)/this.cam.z;this.invalidate();return}
@@ -104,14 +108,16 @@ class MapView{
       tok.x=clamp(w.x-d.dx,0,m.w);tok.y=clamp(w.y-d.dy,0,m.h);d.moved=true;this.canvas.style.cursor="grabbing";
       const now=performance.now();if(now-this.lastEmit>45){this.lastEmit=now;this.emit("move",{id:tok.id,x:tok.x,y:tok.y,final:false})}
       this.invalidate();return}
-    if(d.k==="ruler"){this.ruler.b=w;this.emitRuler(false);this.invalidate();return}
+    if(d.k==="ruler"){const P=this.ruler.pts;P[P.length-1]=Grid.snapMeasure(m.grid,w.x,w.y);this.emitRuler(false);this.invalidate();return}
     if(d.k==="erase"){const dr=this.hitDrawing(w);if(dr&&this.cfg.canErase(dr))this.emit("draw-del",{id:dr.id});return}
     if(d.k==="draw"&&this.cur){const pts=this.cur.pts;
       if(this.cur.type==="pen"){const lx=pts[pts.length-2],ly=pts[pts.length-1];if(Math.hypot(w.x-lx,w.y-ly)*this.cam.z>=2.5&&pts.length<4000)pts.push(+w.x.toFixed(1),+w.y.toFixed(1))}
       else{pts[2]=w.x;pts[3]=w.y}
       this.invalidate();return}
-    if(d.k==="fogrect"){d.b=w;this.invalidate();return}
+    if(d.k==="fogrect"||d.k==="fitrect"){d.b=w;this.invalidate();return}
   }
+  /* a finished measurement stays on screen for a moment, then clears for everyone */
+  endRuler(ms){if(this.ruler)this.ruler.path=false;clearTimeout(this.rulerT);const clear=()=>{this.ruler=null;this.emit("ruler",null);this.invalidate()};if(ms>0)this.rulerT=setTimeout(clear,ms);else clear()}
   up(e){
     const d=this.drag;this.drag=null;const m=this.map;
     if(this.tool==="pan")this.canvas.style.cursor="grab";else if(this.tool==="select")this.canvas.style.cursor="default";
@@ -119,9 +125,10 @@ class MapView{
     if(d.k==="pan"){this.saveCam();return}
     if(d.k==="tok"){const tok=(m.tokens||[]).find(x=>x.id===d.id);if(!tok)return;
       if(!d.moved){this.invalidate();return}
-      if(m.grid.snap!==false){const s=snapPoint(m.grid,tok.x,tok.y,tok.size);tok.x=clamp(s.x,0,m.w);tok.y=clamp(s.y,0,m.h)}
+      if(m.grid.snap!==false){const s=Grid.snap(m.grid,tok.x,tok.y,tok.size);tok.x=clamp(s.x,0,m.w);tok.y=clamp(s.y,0,m.h)}
       this.emit("move",{id:tok.id,x:Math.round(tok.x),y:Math.round(tok.y),final:true});this.invalidate();return}
-    if(d.k==="ruler"){const r=this.ruler;clearTimeout(this.rulerT);this.rulerT=setTimeout(()=>{this.ruler=null;this.emit("ruler",null);this.invalidate()},1600);return}
+    if(d.k==="ruler"){this.endRuler(1600);return}
+    if(d.k==="fitrect"){if(Math.abs(d.b.x-d.a.x)*this.cam.z>8&&Math.abs(d.b.y-d.a.y)*this.cam.z>8)this.emit("grid-fit",{x1:d.a.x,y1:d.a.y,x2:d.b.x,y2:d.b.y});this.invalidate();return}
     if(d.k==="draw"&&this.cur){const c=this.cur;this.cur=null;const p=c.pts;
       const len=p.length>=4?Math.hypot(p[p.length-2]-p[0],p[p.length-1]-p[1]):0;
       if(c.type==="pen"?p.length>=4:len*this.cam.z>3){c.pts=p.map(v=>+(+v).toFixed(1));this.emit("draw-add",c)}
@@ -142,7 +149,7 @@ class MapView{
     if(!isDown)return;
     if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;
     const k=e.key.toLowerCase();
-    if(k==="escape"){if(this.poly){this.poly=null;this.invalidate()}else if(this.sel){this.sel=null;this.emit("select",null);this.invalidate()}return}
+    if(k==="escape"){if(this.ruler&&this.ruler.path){this.endRuler(0)}else if(this.poly){this.poly=null;this.invalidate()}else if(this.sel){this.sel=null;this.emit("select",null);this.invalidate()}return}
     if(k==="enter"&&this.poly){this.finishPoly();return}
     if((k==="delete"||k==="backspace")&&this.sel){this.emit("token-del",this.sel);return}
     if(k==="+"||k==="="){this.zoomBy(1.2);return}
@@ -152,7 +159,8 @@ class MapView{
     if(map[k]&&!e.ctrlKey&&!e.metaKey){this.emit("tool",map[k])}
   }
   emitRuler(force){const now=performance.now();if(!force&&now-this.lastRuler<60)return;this.lastRuler=now;const r=this.ruler;if(!r)return;
-    this.emit("ruler",{a:[Math.round(r.a.x),Math.round(r.a.y)],b:[Math.round(r.b.x),Math.round(r.b.y)]})}
+    const P=r.pts,n=P.length,xy=q=>[Math.round(q.x),Math.round(q.y)],via=[];for(let i=1;i<n-1;i++)via.push(...xy(P[i]));
+    this.emit("ruler",{a:xy(P[0]),b:xy(P[n-1]),via})}
 
   /* ---------------- drawing ---------------- */
   img(asset){if(!asset)return null;const k=asset.id||asset;let im=this.imgs[k];
@@ -178,11 +186,11 @@ class MapView{
     c.fillStyle=m.bg||"#1d2029";c.fillRect(0,0,m.w,m.h);
     const im=this.img(m.asset);if(im){c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";c.drawImage(im,0,0,m.w,m.h)}
     // grid
-    const g=m.grid||{};if(g.show!==false){const s=Math.max(4,Number(g.size)||70),ox=((Number(g.ox)||0)%s+s)%s,oy=((Number(g.oy)||0)%s+s)%s;
+    const g=m.grid||{};if(g.show!==false&&Grid.type(g)!=="none"){const s=Grid.size(g),hex=Grid.isHex(g);
       const v0=this.toWorld(0,0),v1=this.toWorld(W,H);const x0=Math.max(0,v0.x),x1=Math.min(m.w,v1.x),y0=Math.max(0,v0.y),y1=Math.min(m.h,v1.y);
-      if(s*z>=5&&x1>x0&&y1>y0){c.beginPath();for(let x=ox+Math.floor((x0-ox)/s)*s;x<=x1;x+=s){if(x<0)continue;c.moveTo(x,y0);c.lineTo(x,y1)}
-        for(let y=oy+Math.floor((y0-oy)/s)*s;y<=y1;y+=s){if(y<0)continue;c.moveTo(x0,y);c.lineTo(x1,y)}
-        c.strokeStyle=g.color||"#fff";c.globalAlpha=clamp(Number(g.alpha??0.22),0.03,1);c.lineWidth=1/z;c.stroke();c.globalAlpha=1}}
+      if(s*z>=(hex?7:5)&&x1>x0&&y1>y0){c.save();if(hex){c.beginPath();c.rect(0,0,m.w,m.h);c.clip()}
+        c.beginPath();Grid.path(c,g,x0,y0,x1,y1);
+        c.strokeStyle=g.color||"#fff";c.globalAlpha=clamp(Number(g.alpha??0.22),0.03,1);c.lineWidth=1/z;c.stroke();c.restore()}}
     // HUD corner marks around the map edge
     {const L=Math.min(m.w,m.h)*0.04+14/z;c.strokeStyle=TH.corner;c.lineWidth=2/z;c.beginPath();
       [[0,0,1,1],[m.w,0,-1,1],[0,m.h,1,-1],[m.w,m.h,-1,-1]].forEach(([x,y,sx,sy])=>{c.moveTo(x+sx*L,y);c.lineTo(x,y);c.lineTo(x,y+sy*L)});c.stroke()}
@@ -219,6 +227,8 @@ class MapView{
     // fog editing previews
     if(this.drag&&this.drag.k==="fogrect"){const d=this.drag;c.save();c.fillStyle=d.op==="cut"?"rgba(76,201,140,.25)":"rgba(0,0,0,.45)";c.strokeStyle=d.op==="cut"?"#4cc98c":"#ff4459";c.lineWidth=2/z;c.setLineDash([8/z,5/z]);
       c.fillRect(d.a.x,d.a.y,d.b.x-d.a.x,d.b.y-d.a.y);c.strokeRect(d.a.x,d.a.y,d.b.x-d.a.x,d.b.y-d.a.y);c.restore()}
+    if(this.drag&&this.drag.k==="fitrect"){const d=this.drag;c.save();c.fillStyle="rgba(56,214,240,.14)";c.strokeStyle="#38d6f0";c.lineWidth=2/z;c.setLineDash([8/z,5/z]);
+      c.fillRect(d.a.x,d.a.y,d.b.x-d.a.x,d.b.y-d.a.y);c.strokeRect(d.a.x,d.a.y,d.b.x-d.a.x,d.b.y-d.a.y);c.restore()}
     if(this.poly){const p=this.poly.pts;c.save();c.strokeStyle=this.poly.op==="cut"?"#4cc98c":"#ff4459";c.lineWidth=2/z;c.setLineDash([8/z,5/z]);c.beginPath();c.moveTo(p[0],p[1]);for(let i=2;i<p.length;i+=2)c.lineTo(p[i],p[i+1]);
       if(this.mouse)c.lineTo(this.mouse.x,this.mouse.y);c.stroke();c.setLineDash([]);c.fillStyle=c.strokeStyle;for(let i=0;i<p.length;i+=2){c.beginPath();c.arc(p[i],p[i+1],(i===0?6:3.5)/z,0,Math.PI*2);c.fill()}c.restore()}
     // pings
@@ -226,10 +236,12 @@ class MapView{
     for(const pg of this.pings){const a=(now-pg.t)/2200;c.save();c.strokeStyle=pg.color;for(let k=0;k<2;k++){const aa=(a+k*0.35)%1;c.globalAlpha=1-aa;c.lineWidth=3/z;c.beginPath();c.arc(pg.x,pg.y,(10+aa*60)/z,0,Math.PI*2);c.stroke()}
       c.globalAlpha=1;c.fillStyle=pg.color;c.beginPath();c.arc(pg.x,pg.y,5/z,0,Math.PI*2);c.fill();c.restore()}
     // rulers (world lines)
-    const rulers=[];if(this.ruler)rulers.push({a:this.ruler.a,b:this.ruler.b,color:me.color||"#38d6f0",name:""});
-    for(const k in this.remoteRulers){const r=this.remoteRulers[k];if(now-r.t>8000){delete this.remoteRulers[k];continue}rulers.push({a:{x:r.a[0],y:r.a[1]},b:{x:r.b[0],y:r.b[1]},color:r.color||"#f2a93b",name:r.name||""})}
-    for(const r of rulers){c.save();c.strokeStyle=r.color;c.lineWidth=3/z;c.setLineDash([10/z,6/z]);c.beginPath();c.moveTo(r.a.x,r.a.y);c.lineTo(r.b.x,r.b.y);c.stroke();c.setLineDash([]);c.fillStyle=r.color;
-      [r.a,r.b].forEach(q=>{c.beginPath();c.arc(q.x,q.y,5/z,0,Math.PI*2);c.fill()});c.restore()}
+    const rulers=[];if(this.ruler)rulers.push({pts:this.ruler.pts,color:me.color||"#38d6f0",name:""});
+    for(const k in this.remoteRulers){const r=this.remoteRulers[k];if(now-r.t>8000){delete this.remoteRulers[k];continue}
+      const pts=[{x:r.a[0],y:r.a[1]}],v=Array.isArray(r.via)?r.via:[];for(let i=0;i+1<v.length&&i<24;i+=2)pts.push({x:Number(v[i])||0,y:Number(v[i+1])||0});pts.push({x:r.b[0],y:r.b[1]});
+      rulers.push({pts,color:r.color||"#f2a93b",name:r.name||""})}
+    for(const r of rulers){c.save();c.strokeStyle=r.color;c.lineWidth=3/z;c.setLineDash([10/z,6/z]);c.beginPath();r.pts.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));c.stroke();c.setLineDash([]);c.fillStyle=r.color;
+      r.pts.forEach(q=>{c.beginPath();c.arc(q.x,q.y,5/z,0,Math.PI*2);c.fill()});c.restore()}
     // screen-space overlays: labels + ruler readouts
     c.setTransform(dpr,0,0,dpr,0,0);
     const label=(t)=>{if(t.hidden&&this.cfg.role!=="gm")return;if(playerView&&!mine(t)&&this.fogHides(m,t.x,t.y))return;const r=this.tokR(t);const s=this.toScreen(t.x,t.y+r*1.02);
@@ -237,8 +249,8 @@ class MapView{
       c.font=`700 13px ${TH.font}`;const w=c.measureText(text).width+10;c.fillStyle=TH.labelBg;c.fillRect(Math.round(s.x-w/2),Math.round(s.y+3),Math.round(w),17);c.fillStyle=TH.accent;c.fillRect(Math.round(s.x-w/2),Math.round(s.y+3),2,17);
       c.fillStyle=TH.label;c.textAlign="center";c.textBaseline="middle";c.fillText(text,s.x,s.y+12)};
     labels.forEach(label);ownLabels.forEach(label);
-    for(const r of rulers){const cells=Math.hypot(r.b.x-r.a.x,r.b.y-r.a.y)/Math.max(4,Number(g.size)||70);const meters=cells*(Number(g.m)||2);
-      const s=this.toScreen(r.b.x,r.b.y);const text=`${meters.toFixed(meters<10?1:0)} m · ${cells.toFixed(1)} sq${r.name?" · "+r.name:""}`;
+    for(const r of rulers){const end=r.pts[r.pts.length-1];
+      const s=this.toScreen(end.x,end.y);const text=Grid.measure(g,r.pts).text+(r.name?" · "+r.name:"");
       c.font=`13px ${TH.mono}`;const w=c.measureText(text).width+14;c.fillStyle="rgba(8,9,14,.88)";c.fillRect(Math.round(s.x+10),Math.round(s.y-26),Math.round(w),22);
       c.fillStyle=r.color;c.fillRect(Math.round(s.x+10),Math.round(s.y-26),3,22);c.fillStyle="#eef0f6";c.textAlign="left";c.textBaseline="middle";c.fillText(text,s.x+17,s.y-15)}
     if(this.preview&&this.cfg.role==="gm"){c.font=`12px ${TH.mono}`;c.fillStyle=TH.previewBg;c.fillRect(12,12,190,24);c.fillStyle=TH.previewInk;c.textAlign="left";c.textBaseline="middle";c.fillText("PREVIEWING PLAYER VIEW",20,24)}

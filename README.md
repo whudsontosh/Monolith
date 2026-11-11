@@ -105,6 +105,24 @@ Its script calls `Monolith.registerGame({ id, api: 1, rulesets: { <id>: ruleset 
 
 The registration can also give `brand(role)` (the game's wordmark in the top bar) and `diceLabel`.
 
+**The map's grid.** Each map has a grid type the GM picks in Map settings: squares, hexes (flat or
+pointed top) or no grid. Everything that snaps or measures goes through `Grid` in `src/core/grid.js`
+(`Grid.snap`, `Grid.measure`, `Grid.cell`, `Grid.center`, `Grid.corners`), so games should use it
+rather than doing their own arithmetic on `grid.size`. A game sets the defaults for its new maps by
+registering `map`; both fields are optional data:
+
+```js
+map:{
+  diag:"one",           // how square grids count diagonals: "euclid" (straight line, the default),
+                        // "one" (a diagonal costs one square) or "alternate" (1, 2, 1, 2 ...)
+  unit:{n:5, u:"ft"},   // what one cell is worth; the default is 2 m
+}
+```
+
+The GM can change both per map. Maps saved before Monolith 1.2.0 stay square, measured in a straight
+line, in metres. From 1.2.0 a player whose Monolith is older than the GM's is asked to update before
+joining, so everyone's map means the same thing.
+
 **3D dice.** When someone rolls, the dice the roll used are thrown across their own screen (a small
 physics simulation: they bounce off the window's edges and each other) and land on the rolled numbers; other people at the table get only the result. Every die rolled with the core's
 `d(n)` in the same moment as a `Dice.push` (including `Dice.raw` and `Dice.expr`) is shown, so games

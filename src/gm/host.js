@@ -57,10 +57,9 @@ function addLog(e){e.t=Date.now();st.tableLog=st.tableLog||[];st.tableLog.push(e
 /* ---------- maps ---------- */
 function activeMap(){return (st.maps||[]).find(m=>m.id===st.activeMap)||null}
 function curMap(){return (st.maps||[]).find(m=>m.id===ui.mapId)||activeMap()||(st.maps||[])[0]||null}
-function freeSpot(m,x,y){const g=Math.max(4,Number(m.grid.size)||70);const s0=snapPoint(m.grid,x,y,1);
-  for(let r=0;r<12;r++)for(let dx=-r;dx<=r;dx++)for(let dy=-r;dy<=r;dy++){if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
-    const px=s0.x+dx*g,py=s0.y+dy*g;if(px<0||py<0||px>m.w||py>m.h)continue;if(!(m.tokens||[]).some(t=>Math.hypot(t.x-px,t.y-py)<g*0.8))return {x:px,y:py}}
-  return s0}
+function freeSpot(m,x,y){const g=Grid.size(m.grid),spots=Grid.around(m.grid,x,y,11);
+  for(const p of spots){if(p.x<0||p.y<0||p.x>m.w||p.y>m.h)continue;if(!(m.tokens||[]).some(t=>Math.hypot(t.x-p.x,t.y-p.y)<g*0.8))return p}
+  return spots[0]}
 function viewCenter(m){if(MapV&&MapV.map===m&&MapV.cw>2){const w=MapV.toWorld(MapV.cw/2,MapV.ch/2);return {x:clamp(w.x,0,m.w),y:clamp(w.y,0,m.h)}}return {x:m.w/2,y:m.h/2}}
 function charColor(c){try{return RS.character.card(c).color||"#7d7d7d"}catch(e){return "#7d7d7d"}}
 function ensurePcToken(m,c,pid){if(!m||!c)return null;let t=m.tokens.find(x=>x.kind==="pc"&&x.ref===c.id);
@@ -91,7 +90,11 @@ function onServer(m){
   if(m.ev==="msg")onMsg(m.conn,m.msg);
 }
 /* every player runs exactly the game version the GM runs */
+/* ...and a Monolith at least as new as the GM's, so everyone's map means the same thing */
+function appVer(v){const m=/^(\d+)\.(\d+)\.(\d+)/.exec(String(v||""));return m?[+m[1],+m[2],+m[3]]:[0,0,0]}
+function appOlder(a,b){const x=appVer(a),y=appVer(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]<y[i];return false}
 function gameMismatch(conn,h){const g=h&&h.game||{};
+  if(appOlder(h&&h.app,MONOLITH_VERSION)){kick(conn,`This table runs Monolith ${MONOLITH_VERSION}. Update Monolith to that version or newer, then join again.`);return true}
   if(g.id!==gameId()){sendTo(conn,{t:"need-game",game:gameId(),name:GAME_INFO.name,version:GAME_INFO.version,wrong:true});kick(conn,`This table plays ${GAME_INFO.name}. Open ${GAME_INFO.name} in Monolith to join it.`);return true}
   if(g.version!==GAME_INFO.version){sendTo(conn,{t:"need-game",game:gameId(),name:GAME_INFO.name,version:GAME_INFO.version});kick(conn,`This table uses ${GAME_INFO.name} ${GAME_INFO.version}. Monolith is getting that version for you.`);return true}
   return false}
@@ -138,7 +141,7 @@ function onMsg(conn,m){
       t.x=clamp(Number(m.x)||0,0,mp.w);t.y=clamp(Number(m.y)||0,0,mp.h);if(!t.hidden)broadcast({t:"tok",id:t.id,x:t.x,y:t.y,final:!!m.final},conn);
       if(MapV)MapV.invalidate();if(m.final)save();return}
     case "ping":{const x=Number(m.x)||0,y=Number(m.y)||0;broadcast({t:"ping",x,y,color:info.color,name:info.name},conn);if(MapV&&curMap()===mp){MapV.addPing(x,y,info.color)}return}
-    case "ruler":{const r=m.r&&Array.isArray(m.r.a)&&Array.isArray(m.r.b)?{a:m.r.a.slice(0,2).map(Number),b:m.r.b.slice(0,2).map(Number)}:null;
+    case "ruler":{const r=m.r&&Array.isArray(m.r.a)&&Array.isArray(m.r.b)?{a:m.r.a.slice(0,2).map(Number),b:m.r.b.slice(0,2).map(Number),via:Array.isArray(m.r.via)?m.r.via.slice(0,24).map(v=>Math.round(Number(v))||0):[]}:null;
       broadcast({t:"ruler",by:conn,name:info.name,color:info.color,r},conn);if(MapV)MapV.setRemoteRuler(conn,r?{...r,name:info.name,color:info.color}:null);return}
     case "draw":{if(!mp)return;
       if(m.op==="add"){if(st.host.playersDraw===false)return;const dr=cleanDrawing(m.d);if(!dr)return;dr.by=info.playerId;if(mp.drawings.some(x=>x.id===dr.id))dr.id=uid();
@@ -173,6 +176,7 @@ function gmMapEvent(type,d){const m=curMap();if(!m)return;const live=m===activeM
     case "ping":if(live)broadcast({t:"ping",x:d.x,y:d.y,color:GM_COLOR(),name:"GM"});return;
     case "ruler":if(live)broadcast({t:"ruler",by:"gm",name:"GM",color:GM_COLOR(),r:d});return;
     case "tool":setMapTool(d);return;
+    case "grid-fit":{Object.assign(m.grid,Grid.fitBox(m.grid,d.x1,d.y1,d.x2,d.y2,ui.fitCells||3));save();setMapTool("select");MapV.invalidate();showNotice("Grid aligned. Fine-tune the size and offset in Map settings if it drifts.");return}
   }}
 function setMapTool(t){MapV.setTool(t);ui.mapTool=t;render()}
 function mapAssetUrl(id){return `http://127.0.0.1:${Host.port}/asset/${encodeURIComponent(id)}?k=${encodeURIComponent(Host.key)}`}
@@ -189,12 +193,13 @@ function hostNavBtn(){const n=Host.conns.size;
 function viewMap(){
   if(!Desk)return `<div class="wrap" style="padding-block:40px"><div class="empty"><h3>Maps run in the desktop app</h3><p class="muted" style="margin:0">Open this game from the Monolith desktop app to use the battle map and online play.</p></div></div>`;
   const m=curMap();const tool=ui.mapTool||"select";const view=MapV;
-  const tools=[toolBtn("select",tool,"select","Select & move (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R)"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
+  const tools=[toolBtn("select",tool,"select","Select & move (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R). Shift+click to measure around corners"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
     `<div class="mtool-sep"></div>`,toolBtn("fog-rect",tool,"fogadd","Hide area with fog (F)"),toolBtn("fog-cut",tool,"fogcut","Reveal area"),toolBtn("fog-poly",tool,"fogpoly","Hide a shape (click points, double-click to finish)"),toolBtn("fog-cutpoly",tool,"fogcutpoly","Reveal a shape"),
     `<div class="mtool-sep"></div>`,`<button class="mtool" data-act="map-zoom" data-v="in" title="Zoom in (+)">${icon("zin")}</button>`,`<button class="mtool" data-act="map-zoom" data-v="out" title="Zoom out (−)">${icon("zout")}</button>`,`<button class="mtool" data-act="map-zoom" data-v="fit" title="Fit map (0)">${icon("fit")}</button>`,
     `<button class="mtool ${view&&view.preview?"on":""}" data-act="map-preview" title="Preview what players see">${icon("eye")}</button>`].join("");
   let sub="";
   if(m&&tool==="draw")sub=inkBar(view);
+  else if(m&&tool==="grid-fit")sub=`<div class="map-sub"><span class="label" style="color:#a1a4b8">Align grid</span><span class="faint" style="font-size:12px;color:#a1a4b8">Drag a box across exactly ${ui.fitCells||3} ${Grid.isHex(m.grid)?"hexes":"squares"} of your map picture, edge to edge${Grid.type(m.grid)==="hex-flat"?" (top to bottom)":Grid.isHex(m.grid)?" (left to right)":""}.</span><button class="btn sm" data-act="map-tool" data-t="select">Cancel</button></div>`;
   else if(m&&tool.startsWith("fog"))sub=`<div class="map-sub"><span class="label" style="color:#a1a4b8">Fog</span><button class="btn sm" data-act="fog-all">Cover whole map</button><button class="btn sm" data-act="fog-undo" ${m.fog.shapes.length?"":"disabled"}>Undo last</button><button class="btn sm" data-act="fog-clear" ${m.fog.shapes.length?"":"disabled"}>${ui.confirm==="fog-clear"?"Confirm: remove all fog":"Remove all fog"}</button><span class="faint" style="font-size:12px;color:#a1a4b8">${tool.includes("poly")?"Click points; click the first point or double-click to finish.":"Drag a box."} Players see fog as solid black.</span></div>`;
   const stage=`<div class="map-stage"><div class="map-slot" id="map-slot" data-keep></div>${sub}${!m?`<div class="map-empty"><h3>No map yet</h3><p>Add a map image (PNG, JPG or WebP), or start with a blank grid.</p><div class="row" style="justify-content:center"><button class="btn primary" data-act="map-add-image">Add map image…</button><button class="btn" data-act="map-add-blank">Blank grid</button></div></div>`:""}</div>`;
   return `<div class="mapwrap"><nav class="map-tools" aria-label="Map tools">${tools}</nav>${stage}${mapResizeHandle()}<aside class="map-side">${mapSide(m)}</aside></div>`;
@@ -217,7 +222,7 @@ function mapDelBody(x){const live=Host.status==="online";const isActive=x.id===s
   const pcs=x.tokens.filter(t=>t.kind==="pc").length,npcs=x.tokens.filter(t=>t.kind==="npc").length,marks=x.tokens.length-pcs-npcs;
   const bits=[];if(pcs)bits.push(`${pcs} character token${pcs===1?"":"s"}`);if(npcs)bits.push(`${npcs} NPC token${npcs===1?"":"s"}`);if(marks)bits.push(`${marks} marker${marks===1?"":"s"}`);if(x.drawings.length)bits.push(`${x.drawings.length} drawing${x.drawings.length===1?"":"s"}`);if(x.fog.shapes.length)bits.push("its fog");
   return `<div style="display:grid;gap:14px">
-    <div class="delcard"><div class="portrait" style="background:#2a2a2a">${icon("map")}</div><div style="min-width:0"><b class="delname">${esc(x.name)}</b><div class="muted" style="font-size:14px">${x.asset?"Map image":"Blank grid"} · ${Math.round(x.w/(Number(x.grid.size)||70))}×${Math.round(x.h/(Number(x.grid.size)||70))} squares${isActive?" · players see this map":""}</div></div></div>
+    <div class="delcard"><div class="portrait" style="background:#2a2a2a">${icon("map")}</div><div style="min-width:0"><b class="delname">${esc(x.name)}</b><div class="muted" style="font-size:14px">${x.asset?"Map image":"Blank grid"} · ${Grid.describe(x.grid,x.w,x.h)}${isActive?" · players see this map":""}</div></div></div>
     <p style="margin:0">This removes the map${bits.length?" along with "+bits.join(", ").replace(/, ([^,]*)$/," and $1"):""}. Characters and the party aren't affected.${isActive?(next?` Players will be switched to <b>${esc(next.name)}</b>${live?" right away":""}.`:` It's the only map, so players won't see a map until you add one.`):""}</p>
     <p class="faint" style="margin:0;font-size:13px">Changed your mind later? Restore <b>Before deleting map "${esc(x.name)}"</b> from Backups → Version history.</p>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="close-modal">Keep it</button><button class="btn danger" id="map-del-go" data-act="map-delete">Delete map</button></div></div>`}
@@ -250,16 +255,20 @@ function tokensSection(m){
     <div class="row" style="gap:6px"><button class="btn sm" data-act="map-place-party" ${st.party.length?"":"disabled"}>Place party</button>${extra}<button class="btn sm ghost" data-act="map-add-marker">+ Marker</button></div>
     ${m.tokens.length?`<div class="tklist">${m.tokens.slice().reverse().map(t=>`<button class="tk ${ui.mapSel===t.id?"on":""}" data-act="tk-select" data-id="${esc(t.id)}"><span class="dot" style="background:${esc(t.color)}"></span><span>${esc(t.label||"Token")}</span>${t.hidden?`<span class="chip ink">Hidden</span>`:""}${t.kind==="pc"&&t.owner&&[...Host.conns.values()].some(i=>i.playerId===t.owner)?`<span class="chip green">Online</span>`:""}</button>`).join("")}</div>`:""}
   </section>`)}
-function mapSettings(m){const g=m.grid;
+function mapSettings(m){const g=m.grid,gt=Grid.type(g),hex=Grid.isHex(g);
   return rg("ms-settings",`<details class="ms" ${ui.mapSettingsOpen?"open":""} data-act-toggle="map-settings"><summary><h3 style="display:inline">Map settings</h3></summary>
     <div class="field"><label class="label" for="mm-name">Map name</label><input id="mm-name" data-mm="name" value="${esc(m.name)}"></div>
-    <div class="grid2"><div class="field"><label class="label" for="mm-size">Square size (px)</label><input id="mm-size" type="number" min="8" max="400" data-mm="grid.size" value="${esc(g.size)}"></div>
-      <div class="field"><label class="label" for="mm-cells">Squares across</label><div class="row" style="flex-wrap:nowrap;gap:4px"><input id="mm-cells" type="number" min="2" max="200" value="${Math.round(m.w/(Number(g.size)||70))}"><button class="btn sm" data-act="mm-fitcells">Set</button></div></div></div>
-    <div class="grid2"><div class="field"><label class="label" for="mm-ox">Grid offset X</label><input id="mm-ox" type="number" data-mm="grid.ox" value="${esc(g.ox||0)}"></div><div class="field"><label class="label" for="mm-oy">Grid offset Y</label><input id="mm-oy" type="number" data-mm="grid.oy" value="${esc(g.oy||0)}"></div></div>
-    <div class="grid2"><div class="field"><label class="label" for="mm-m">Meters per square</label><input id="mm-m" type="number" min="0.5" step="0.5" data-mm="grid.m" value="${esc(g.m??2)}"></div><div class="field"><label class="label" for="mm-alpha">Grid strength</label><input id="mm-alpha" type="range" min="0.05" max="0.8" step="0.05" data-mm="grid.alpha" value="${esc(g.alpha??0.22)}"></div></div>
+    <div class="grid2"><div class="field"><label class="label" for="mm-type">Grid</label><select id="mm-type" data-act-change="mm-sel" data-k="grid.type">${[["square","Squares"],["hex-flat","Hexes, flat top"],["hex-pointy","Hexes, pointed top"],["none","No grid"]].map(([v,l])=>`<option value="${v}" ${gt===v?"selected":""}>${l}</option>`).join("")}</select></div>
+      <div class="field"><label class="label" for="mm-size">${gt==="none"?"Scale: pixels per "+esc(Grid.per(g)+" "+Grid.unit(g)):hex?"Hex size, side to side (px)":"Square size (px)"}</label><input id="mm-size" type="number" min="8" max="400" data-mm="grid.size" value="${esc(g.size)}"></div></div>
+    ${gt==="none"?"":`<div class="grid2"><div class="field"><label class="label" for="mm-cells">${hex?"Hexes":"Squares"} across</label><div class="row" style="flex-wrap:nowrap;gap:4px"><input id="mm-cells" type="number" min="2" max="200" value="${parseInt(Grid.describe(g,m.w,m.h))||1}"><button class="btn sm" data-act="mm-fitcells">Set</button></div></div>
+      <div class="field"><label class="label" for="mm-fitn">Align to the picture</label><div class="row" style="flex-wrap:nowrap;gap:4px"><input id="mm-fitn" type="number" min="1" max="40" value="${ui.fitCells||3}" style="min-width:0" title="How many ${hex?"hexes":"squares"} your box will cover" aria-label="How many ${hex?"hexes":"squares"} your box will cover"><button class="btn sm" data-act="mm-fit" title="Drag a box across that many ${hex?"hexes":"squares"} of your map picture" style="white-space:nowrap;flex:none">Draw box</button></div></div></div>
+    <div class="grid2"><div class="field"><label class="label" for="mm-ox">Grid offset X</label><input id="mm-ox" type="number" data-mm="grid.ox" value="${esc(g.ox||0)}"></div><div class="field"><label class="label" for="mm-oy">Grid offset Y</label><input id="mm-oy" type="number" data-mm="grid.oy" value="${esc(g.oy||0)}"></div></div>`}
+    <div class="grid2"><div class="field"><label class="label" for="mm-m">${gt==="none"?"Scale":hex?"One hex is":"One square is"}</label><div class="row" style="flex-wrap:nowrap;gap:4px"><input id="mm-m" type="number" min="0.5" step="0.5" data-mm="grid.m" value="${esc(Grid.per(g))}"><input id="mm-unit" data-mm="grid.unit" value="${esc(Grid.unit(g))}" maxlength="8" style="width:5.5em" aria-label="Unit, such as m or ft" title="Unit, such as m or ft"></div></div>
+      ${gt==="square"?`<div class="field"><label class="label" for="mm-diag">Diagonals</label><select id="mm-diag" data-act-change="mm-sel" data-k="grid.diag">${[["euclid","Straight line"],["one","Count as 1 square"],["alternate","Count 1, 2, 1, 2…"]].map(([v,l])=>`<option value="${v}" ${Grid.diag(g)===v?"selected":""}>${l}</option>`).join("")}</select></div>`:`<div class="field"><label class="label" for="mm-alpha">Grid strength</label><input id="mm-alpha" type="range" min="0.05" max="0.8" step="0.05" data-mm="grid.alpha" value="${esc(g.alpha??0.22)}"></div>`}</div>
+    ${gt==="square"?`<div class="field"><label class="label" for="mm-alpha">Grid strength</label><input id="mm-alpha" type="range" min="0.05" max="0.8" step="0.05" data-mm="grid.alpha" value="${esc(g.alpha??0.22)}"></div>`:""}
     <div class="checks">
       <label><input type="checkbox" data-act-change="mm-bool" data-k="grid.show" ${g.show!==false?"checked":""}> Show grid</label>
-      <label><input type="checkbox" data-act-change="mm-bool" data-k="grid.snap" ${g.snap!==false?"checked":""}> Snap tokens to squares</label>
+      <label><input type="checkbox" data-act-change="mm-bool" data-k="grid.snap" ${g.snap!==false?"checked":""}> Snap tokens to the grid</label>
       <label><input type="checkbox" data-act-change="mm-bool" data-k="fog.on" ${m.fog.on?"checked":""}> Fog of war on</label>
       <label><input type="checkbox" data-act-change="host-bool" data-k="playersMove" ${st.host.playersMove!==false?"checked":""}> Players can move their own token</label>
       <label><input type="checkbox" data-act-change="host-bool" data-k="playersDraw" ${st.host.playersDraw!==false?"checked":""}> Players can draw</label>
@@ -321,7 +330,10 @@ Object.assign(A,{
   "map-ask-del":el=>{if(!(st.maps||[]).some(x=>x.id===el.dataset.id))return;ui.mapDelId=el.dataset.id;ui.modal="map-del";renderModal()},
   "map-delete":()=>deleteMap(ui.mapDelId),
   "map-clear-draw":()=>{const m=curMap();if(ui.confirm!=="clear-draw"){ui.confirm="clear-draw";render();return}m.drawings=[];ui.confirm=null;save();render();MapV.invalidate()},
-  "mm-fitcells":()=>{const m=curMap();const n=clamp(Number(document.getElementById("mm-cells").value)||0,2,200);if(!n)return;m.grid.size=Math.round(m.w/n*100)/100;save();render();MapV.invalidate()},
+  "mm-fitcells":()=>{const m=curMap();const n=clamp(Number(document.getElementById("mm-cells").value)||0,2,200);if(!n)return;
+    // hexes with flat tops sit 3/4 of their width apart, so the column count needs that factor
+    m.grid.size=Math.round((Grid.type(m.grid)==="hex-flat"?m.w/n*2/Math.sqrt(3):m.w/n)*100)/100;save();render();MapV.invalidate()},
+  "mm-fit":()=>{ui.fitCells=clamp(Math.round(Number(document.getElementById("mm-fitn").value)||3),1,40);setMapTool("grid-fit")},
   "fog-all":()=>{const m=curMap();m.fog.shapes.push({id:uid(),op:"add",type:"rect",pts:[0,0,m.w,m.h]});m.fog.on=true;save();render();MapV.invalidate()},
   "fog-undo":()=>{const m=curMap();m.fog.shapes.pop();save();render();MapV.invalidate()},
   "fog-clear":()=>{const m=curMap();if(ui.confirm!=="fog-clear"){ui.confirm="fog-clear";render();return}m.fog.shapes=[];ui.confirm=null;save();render();MapV.invalidate()},
@@ -349,12 +361,15 @@ Object.assign(CHANGE,{
   "rm-block":el=>{ui.rmBlock=el.checked},
   "tk-hidden":el=>{const t=selTok();if(t){t.hidden=el.checked;save();render();MapV.invalidate()}},
   "tk-owner":el=>{const t=selTok();if(t){t.owner=el.value||null;save();render()}},
+  "mm-sel":el=>{const m=curMap();if(!m)return;const k=el.dataset.k,v=el.value;
+    if(k==="grid.type"&&Grid.TYPES.includes(v))m.grid.type=v;else if(k==="grid.diag"&&Grid.DIAGS.includes(v))m.grid.diag=v;else return;
+    save();render();MapV.invalidate()},
   "mm-bool":el=>{const m=curMap();setPath(m,el.dataset.k,el.checked);save();render();MapV.invalidate()},
   "host-bool":el=>{st.host[el.dataset.k]=el.checked;Host.lastScene="";save();render()},
 });
 document.addEventListener("input",ev=>{const el=ev.target;
   if(el.dataset.mt){const t=selTok();if(t){t[el.dataset.mt]=cleanText(el.value,40);save();MapV.invalidate()}}
-  else if(el.dataset.mm){const m=curMap();if(!m)return;let v=el.type==="number"||el.type==="range"?Number(el.value):el.value;if(el.dataset.mm==="grid.size")v=clamp(v||70,8,400);if(el.dataset.mm==="name")v=cleanText(v,60);setPath(m,el.dataset.mm,v);save();MapV.invalidate()}
+  else if(el.dataset.mm){const m=curMap();if(!m)return;let v=el.type==="number"||el.type==="range"?Number(el.value):el.value;if(el.dataset.mm==="grid.size")v=clamp(v||70,8,400);if(el.dataset.mm==="name")v=cleanText(v,60);if(el.dataset.mm==="grid.unit")v=Grid.cleanUnit(v)||"m";if(el.dataset.mm==="grid.m")v=v>0?v:Grid.per(m.grid);setPath(m,el.dataset.mm,v);save();MapV.invalidate()}
   else if(el.dataset.host==="password"){st.host.password=cleanText(el.value,60);pushConfig();save()}
 });
 document.addEventListener("toggle",ev=>{const el=ev.target;if(el.dataset&&el.dataset.actToggle==="map-settings")ui.mapSettingsOpen=el.open},true);
