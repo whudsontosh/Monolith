@@ -123,6 +123,30 @@ The GM can change both per map. Maps saved before Monolith 1.2.0 stay square, me
 line, in metres. From 1.2.0 a player whose Monolith is older than the GM's is asked to update before
 joining, so everyone's map means the same thing.
 
+**Area templates** (1.3.0). The Template tool lays a circle, cone, line or square on the map and
+rings every token it catches. The core does the geometry (`Tpl` in `src/core/templates.js`); a game
+gives it meaning with more optional fields in `map`:
+
+```js
+map:{
+  templates:[{id:"fireball", name:"Fireball", shape:"circle", size:20, color:"#ff7a3c"},
+             {id:"bolt", name:"Lightning Bolt", shape:"line", size:100, width:5}],
+                        // ready-made templates for the tool's menu; sizes in the map's units
+  inside:"centre",      // who is caught: "centre" (the token's middle is inside, the default),
+                        // "touch" (any part of the token) or "cells" (it stands on a square or
+                        // hex at least half covered)
+  origin:"any",         // where a template may start: "corner", "centre" or "any"
+  cone:53.13,           // a cone's full angle in degrees (default: as wide as it is long)
+  onCaught(template, tokens){ /* GM side: a template was placed or changed */ },
+}
+```
+
+On the GM's side a game can place and read templates itself, on the map the GM is looking at:
+`Monolith.map.addTemplate({shape, x, y, size, width, angle, color, label})` (sizes in the map's
+units; returns its id), `Monolith.map.removeTemplate(id)`, `Monolith.map.templates()` and
+`Monolith.map.caught(id)` (the tokens inside). Players can place and remove their own templates
+unless the GM turns that off in Map settings.
+
 **3D dice.** When someone rolls, the dice the roll used are thrown across their own screen (a small
 physics simulation: they bounce off the window's edges and each other) and land on the rolled numbers; other people at the table get only the result. Every die rolled with the core's
 `d(n)` in the same moment as a `Dice.push` (including `Dice.raw` and `Dice.expr`) is shown, so games

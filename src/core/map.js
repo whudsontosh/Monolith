@@ -16,13 +16,14 @@ function inPoly(x,y,p){let c=false;for(let i=0,j=p.length-2;i<p.length;j=i,i+=2)
 
 class MapView{
   constructor(cfg){
-    this.cfg=cfg; // {role:'gm'|'player', getMap(), canMove(tok), canErase(d), onEvent(type,data), imgUrl(asset), me(){return {color,name}}, ringFor(tok), activeTok()}
+    this.cfg=cfg; // {role:'gm'|'player', getMap(), canMove(tok), canErase(d), canTpl(t), canPlaceTpl(), onEvent(type,data), imgUrl(asset), me(){return {color,name}}, ringFor(tok), activeTok()}
     this.el=document.createElement("div");this.el.className="mapview";this.el.tabIndex=0;
     this.canvas=document.createElement("canvas");this.el.appendChild(this.canvas);
     this.hud=document.createElement("div");this.hud.className="map-hud";this.el.appendChild(this.hud);
     this.ctx=this.canvas.getContext("2d");
     this.cam={x:0,y:0,z:1};this.cams={};this.mapId=null;
     this.tool="select";this.drawMode="pen";this.inkColor=INK_COLORS[0];this.inkWidth=4;
+    this.tplShape="circle";this.tplPreset="";this.tplColor="#f2a93b";this.tplWidth=1;this.tplSel=null;this.tplDraft=null;
     this.sel=null;this.drag=null;this.ruler=null;this.poly=null;this.cur=null;this.preview=false;
     this.remoteRulers={};this.pings=[];this.imgs={};this.fogCv=document.createElement("canvas");this.fogKey="";
     this.dpr=1;this.cw=1;this.ch=1;this.raf=0;this.space=false;this.lastEmit=0;this.hover=null;
@@ -55,7 +56,7 @@ class MapView{
   toWorld(sx,sy){return {x:sx/this.cam.z+this.cam.x,y:sy/this.cam.z+this.cam.y}}
   toScreen(wx,wy){return {x:(wx-this.cam.x)*this.cam.z,y:(wy-this.cam.y)*this.cam.z}}
   pt(e){const r=this.canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
-  setTool(t){this.tool=t;this.poly=null;this.cur=null;if(this.ruler&&this.ruler.path)this.endRuler(0);this.canvas.style.cursor=t==="pan"?"grab":t==="select"?"default":"crosshair";this.invalidate()}
+  setTool(t){this.tool=t;this.poly=null;this.cur=null;this.tplDraft=null;if(this.ruler&&this.ruler.path)this.endRuler(0);this.canvas.style.cursor=t==="pan"?"grab":t==="select"?"default":"crosshair";this.invalidate()}
   tokR(t){return Grid.tokR(this.map.grid,t.size)}
   visibleTokens(){const m=this.map;return (m.tokens||[])}
   hitToken(w){const ts=this.visibleTokens();for(let i=ts.length-1;i>=0;i--){const t=ts[i];if(this.cfg.role!=="gm"&&t.hidden)continue;if(Math.hypot(w.x-t.x,w.y-t.y)<=this.tokR(t))return t}return null}
@@ -64,6 +65,20 @@ class MapView{
         if(w.x>xs[0]-tol&&w.x<xs[1]+tol&&w.y>ys[0]-tol&&w.y<ys[1]+tol&&!(w.x>xs[0]+tol&&w.x<xs[1]-tol&&w.y>ys[0]+tol&&w.y<ys[1]-tol))return d;continue}
       for(let j=0;j+3<p.length;j+=2)if(segDist(w.x,w.y,p[j],p[j+1],p[j+2],p[j+3])<tol+(d.w||2)/2)return d}
     return null}
+  /* ---- area templates (templates.js has the geometry) ---- */
+  tpls(){const m=this.map;return (m&&m.templates)||[]}
+  canTpl(t){return !!(this.cfg.canTpl&&this.cfg.canTpl(t))}
+  /* the dot a pointer is on: a template's start (move it) or its far end (turn and resize it) */
+  hitTpl(w){const g=this.map.grid,tol=11/this.cam.z,ts=this.tpls();
+    for(let i=ts.length-1;i>=0;i--){const t=ts[i];if(!this.canTpl(t))continue;const e=Tpl.endPoint(t,g);
+      if(Math.hypot(w.x-e.x,w.y-e.y)<tol)return {t,part:"end"};if(Math.hypot(w.x-t.x,w.y-t.y)<tol)return {t,part:"origin"}}
+    return null}
+  /* point a template from where it starts toward the pointer: sets its size (whole cells) and direction (15° steps) */
+  aimTpl(t,w,free){const g=this.map.grid,s=Grid.size(g),snap=g.snap!==false&&Grid.type(g)!=="none";
+    const o=t.o||t,dx=w.x-o.x,dy=w.y-o.y,cells=d=>snap?Math.max(1,Math.round(d/s)):Math.max(.25,Math.round(d/s*10)/10);
+    if(t.shape==="square"){if(!t.fixed)t.size=cells(Math.max(Math.abs(dx),Math.abs(dy)));if(t.o){const L=t.size*s;t.x=dx<0?o.x-L:o.x;t.y=dy<0?o.y-L:o.y}return}
+    if(!t.fixed)t.size=cells(Math.hypot(dx,dy));
+    if(t.shape!=="circle"&&(dx||dy)){let a=Math.atan2(dy,dx);if(!free){const st=Math.PI/12;a=Math.round(a/st)*st}t.angle=a}}
   addPing(x,y,color){this.pings.push({x,y,color:color||"#ff4459",t:performance.now()});this.invalidate()}
   setRemoteRuler(by,data){if(!data)delete this.remoteRulers[by];else this.remoteRulers[by]={...data,t:performance.now()};this.invalidate()}
 
@@ -88,6 +103,12 @@ class MapView{
       if(this.ruler&&this.ruler.path){const P=this.ruler.pts;P[P.length-1]=q;this.emitRuler(true);this.endRuler(2600);this.invalidate();return}
       this.ruler={pts:[q,q]};this.drag={k:"ruler"};this.emitRuler(true);this.invalidate();return}
     if(t==="grid-fit"){this.drag={k:"fitrect",a:w,b:w};return}
+    if(t==="template"){const hit=this.hitTpl(w);
+      if(hit){this.tplSel=hit.t.id;this.drag={k:hit.part==="end"?"tplaim":"tplmove",id:hit.t.id,dx:w.x-hit.t.x,dy:w.y-hit.t.y,moved:false};this.emit("tpl-select",hit.t.id);this.invalidate();return}
+      if(this.cfg.canPlaceTpl&&!this.cfg.canPlaceTpl()){this.emit("tpl-denied");return}
+      const o=Tpl.snapOrigin(m.grid,w.x,w.y),pre=Tpl.presets(m.grid).find(x=>x.id===this.tplPreset)||null;
+      this.tplDraft={id:uid(),shape:pre?pre.shape:this.tplShape,x:o.x,y:o.y,size:pre?pre.size:0,width:pre?pre.width:Math.max(.25,Number(this.tplWidth)||1),angle:0,color:(pre&&pre.color)||this.tplColor,label:pre?pre.name:"",o};
+      if(pre)this.tplDraft.fixed=true;this.drag={k:"tplnew",moved:false};this.invalidate();return}
     if(t==="draw"){
       if(this.drawMode==="erase"){const d=this.hitDrawing(w);if(d&&this.cfg.canErase(d))this.emit("draw-del",{id:d.id});this.drag={k:"erase"};return}
       this.cur={id:uid(),type:this.drawMode,color:this.inkColor,w:Math.max(0.5,this.inkWidth/this.cam.z),pts:[w.x,w.y,w.x,w.y]};this.drag={k:"draw"};this.invalidate();return}
@@ -115,6 +136,10 @@ class MapView{
       else{pts[2]=w.x;pts[3]=w.y}
       this.invalidate();return}
     if(d.k==="fogrect"||d.k==="fitrect"){d.b=w;this.invalidate();return}
+    if(d.k==="tplnew"&&this.tplDraft){this.aimTpl(this.tplDraft,w,e.shiftKey);d.moved=true;this.invalidate();return}
+    if(d.k==="tplaim"||d.k==="tplmove"){const t=this.tpls().find(x=>x.id===d.id);if(!t){this.drag=null;return}
+      if(d.k==="tplaim")this.aimTpl(t,w,e.shiftKey);else{const o=Tpl.snapOrigin(m.grid,w.x-d.dx,w.y-d.dy);t.x=o.x;t.y=o.y}
+      d.moved=true;d.last={id:t.id,x:t.x,y:t.y,size:t.size,width:t.width,angle:t.angle};this.invalidate();return}
   }
   /* a finished measurement stays on screen for a moment, then clears for everyone */
   endRuler(ms){if(this.ruler)this.ruler.path=false;clearTimeout(this.rulerT);const clear=()=>{this.ruler=null;this.emit("ruler",null);this.invalidate()};if(ms>0)this.rulerT=setTimeout(clear,ms);else clear()}
@@ -128,6 +153,8 @@ class MapView{
       if(m.grid.snap!==false){const s=Grid.snap(m.grid,tok.x,tok.y,tok.size);tok.x=clamp(s.x,0,m.w);tok.y=clamp(s.y,0,m.h)}
       this.emit("move",{id:tok.id,x:Math.round(tok.x),y:Math.round(tok.y),final:true});this.invalidate();return}
     if(d.k==="ruler"){this.endRuler(1600);return}
+    if(d.k==="tplnew"){const t=this.tplDraft;this.tplDraft=null;if(t&&(t.fixed||(d.moved&&t.size>0))){delete t.o;this.tplSel=t.id;this.emit("tpl-add",t)}this.invalidate();return}
+    if(d.k==="tplaim"||d.k==="tplmove"){if(d.moved&&d.last)this.emit("tpl-set",d.last);this.invalidate();return}
     if(d.k==="fitrect"){if(Math.abs(d.b.x-d.a.x)*this.cam.z>8&&Math.abs(d.b.y-d.a.y)*this.cam.z>8)this.emit("grid-fit",{x1:d.a.x,y1:d.a.y,x2:d.b.x,y2:d.b.y});this.invalidate();return}
     if(d.k==="draw"&&this.cur){const c=this.cur;this.cur=null;const p=c.pts;
       const len=p.length>=4?Math.hypot(p[p.length-2]-p[0],p[p.length-1]-p[1]):0;
@@ -151,11 +178,12 @@ class MapView{
     const k=e.key.toLowerCase();
     if(k==="escape"){if(this.ruler&&this.ruler.path){this.endRuler(0)}else if(this.poly){this.poly=null;this.invalidate()}else if(this.sel){this.sel=null;this.emit("select",null);this.invalidate()}return}
     if(k==="enter"&&this.poly){this.finishPoly();return}
+    if((k==="delete"||k==="backspace")&&this.tool==="template"&&this.tplSel){const id=this.tplSel;this.tplSel=null;this.emit("tpl-del",id);return}
     if((k==="delete"||k==="backspace")&&this.sel){this.emit("token-del",this.sel);return}
     if(k==="+"||k==="="){this.zoomBy(1.2);return}
     if(k==="-"||k==="_"){this.zoomBy(1/1.2);return}
     if(k==="0"){this.fit();return}
-    const map={v:"select",h:"pan",r:"ruler",d:"draw",p:"ping"};if(this.cfg.role==="gm"){map.f="fog-rect"}
+    const map={v:"select",h:"pan",r:"ruler",d:"draw",p:"ping",t:"template"};if(this.cfg.role==="gm"){map.f="fog-rect"}
     if(map[k]&&!e.ctrlKey&&!e.metaKey){this.emit("tool",map[k])}
   }
   emitRuler(force){const now=performance.now();if(!force&&now-this.lastRuler<60)return;this.lastRuler=now;const r=this.ruler;if(!r)return;
@@ -201,7 +229,7 @@ class MapView{
     (m.drawings||[]).forEach(strokeD);if(this.cur)strokeD(this.cur);
     // tokens
     const me=this.cfg.me();const active=this.cfg.activeTok?this.cfg.activeTok():null;const now=performance.now();
-    const labels=[];
+    const labels=[];const caughtBy=new Map();
     const drawTok=(t)=>{const r=this.tokR(t);const hidden=t.hidden;if(hidden&&this.cfg.role!=="gm")return;
       c.save();if(hidden)c.globalAlpha=0.45;
       if(t.id===active){c.beginPath();c.arc(t.x,t.y,r+Math.max(6/z,r*0.18),0,Math.PI*2);c.fillStyle=TH.activeGlow;c.fill()}
@@ -213,12 +241,26 @@ class MapView{
       const ring=this.cfg.ringFor?this.cfg.ringFor(t):null;
       if(ring&&ring.color){c.lineWidth=Math.max(3/z,r*0.14);c.strokeStyle=ring.color;c.beginPath();c.arc(t.x,t.y,r*1.04,-Math.PI/2,-Math.PI/2+Math.PI*2*clamp(ring.frac??1,0.05,1));c.stroke();
         if(ring.dead){c.strokeStyle="#ff4459";c.lineWidth=Math.max(2/z,r*0.12);c.beginPath();c.moveTo(t.x-r*0.6,t.y-r*0.6);c.lineTo(t.x+r*0.6,t.y+r*0.6);c.moveTo(t.x+r*0.6,t.y-r*0.6);c.lineTo(t.x-r*0.6,t.y+r*0.6);c.stroke()}}
+      if(caughtBy.has(t.id)){c.setLineDash([]);c.lineWidth=Math.max(3/z,r*0.1);c.strokeStyle=caughtBy.get(t.id);c.beginPath();c.arc(t.x,t.y,r*1.3,0,Math.PI*2);c.stroke()}
       if(t.id===this.sel||t.id===this.hover){c.setLineDash([6/z,4/z]);c.lineWidth=2/z;c.strokeStyle=t.id===this.sel?TH.select:"rgba(255,255,255,.6)";c.beginPath();c.arc(t.x,t.y,r*1.18,0,Math.PI*2);c.stroke();c.setLineDash([])}
       if(hidden&&this.cfg.role==="gm"){c.globalAlpha=1;c.fillStyle="#0b0c11";c.font=`${Math.max(9/z,r*0.3)}px ${TH.mono}`;c.textAlign="center";c.fillText("HIDDEN",t.x,t.y-r*1.3)}
       c.restore();
       labels.push(t)};
     const mine=t=>t.owner&&t.owner===me.playerId;
     const toks=m.tokens||[];
+    // area templates: under the tokens; whoever they catch gets a ring in the template's color
+    const tplInfo=[];{const list=(m.templates||[]).slice();if(this.tplDraft&&this.tplDraft.size>0)list.push(this.tplDraft);
+      const seen=toks.filter(t=>!(t.hidden&&(playerView||this.cfg.role!=="gm"))&&!(playerView&&!mine(t)&&this.fogHides(m,t.x,t.y)));
+      const byCells=Tpl.rule()==="cells"&&Grid.type(g)!=="none",editing=this.tool==="template";
+      for(const t of list){const o=Tpl.outline(t,g);c.save();c.beginPath();o.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));c.closePath();
+        c.fillStyle=t.color;c.globalAlpha=byCells?.07:.17;c.fill();
+        if(byCells){c.globalAlpha=.2;c.beginPath();for(const k of Tpl.cells(t,g)){Grid.corners(g,k).forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));c.closePath()}c.fill();
+          c.beginPath();o.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));c.closePath()}
+        c.globalAlpha=.95;c.strokeStyle=t.color;c.lineWidth=(t.id===this.tplSel&&editing?3:2)/z;c.lineJoin="round";c.stroke();
+        if(editing&&(t===this.tplDraft||this.canTpl(t))){const e=Tpl.endPoint(t,g);c.fillStyle=t.color;c.beginPath();c.arc(t.x,t.y,6/z,0,Math.PI*2);c.fill();
+          c.fillStyle="#fff";c.strokeStyle=t.color;c.lineWidth=2/z;c.beginPath();c.rect(e.x-5/z,e.y-5/z,10/z,10/z);c.fill();c.stroke()}
+        c.restore();
+        const got=Tpl.caught(t,g,seen);got.forEach(k=>{if(!caughtBy.has(k.id))caughtBy.set(k.id,t.color)});tplInfo.push({t,got})}}
     toks.filter(t=>!(playerView&&mine(t))).forEach(drawTok);
     // fog
     if(m.fog&&m.fog.on&&(m.fog.shapes||[]).length){const fc=this.fogLayer(m);c.save();c.globalAlpha=playerView?1:0.55;c.imageSmoothingEnabled=true;c.drawImage(fc,0,0,m.w,m.h);c.restore()}
@@ -249,6 +291,10 @@ class MapView{
       c.font=`700 13px ${TH.font}`;const w=c.measureText(text).width+10;c.fillStyle=TH.labelBg;c.fillRect(Math.round(s.x-w/2),Math.round(s.y+3),Math.round(w),17);c.fillStyle=TH.accent;c.fillRect(Math.round(s.x-w/2),Math.round(s.y+3),2,17);
       c.fillStyle=TH.label;c.textAlign="center";c.textBaseline="middle";c.fillText(text,s.x,s.y+12)};
     labels.forEach(label);ownLabels.forEach(label);
+    for(const {t,got} of tplInfo){const s=t.shape==="circle"?this.toScreen(t.x-10/z,t.y-t.size*Grid.size(g)):this.toScreen(t.x,t.y);if(s.x<-200||s.x>W+50||s.y<-20||s.y>H+60)continue;
+      const text=Tpl.describe(t,g)+(got.length?` · ${got.length} caught`:"");
+      c.font=`12px ${TH.mono}`;const w=c.measureText(text).width+14;c.fillStyle="rgba(8,9,14,.88)";c.fillRect(Math.round(s.x+10),Math.round(s.y-28),Math.round(w),20);
+      c.fillStyle=t.color;c.fillRect(Math.round(s.x+10),Math.round(s.y-28),3,20);c.fillStyle="#eef0f6";c.textAlign="left";c.textBaseline="middle";c.fillText(text,s.x+17,s.y-18)}
     for(const r of rulers){const end=r.pts[r.pts.length-1];
       const s=this.toScreen(end.x,end.y);const text=Grid.measure(g,r.pts).text+(r.name?" · "+r.name:"");
       c.font=`13px ${TH.mono}`;const w=c.measureText(text).width+14;c.fillStyle="rgba(8,9,14,.88)";c.fillRect(Math.round(s.x+10),Math.round(s.y-26),Math.round(w),22);

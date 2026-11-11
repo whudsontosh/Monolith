@@ -69,6 +69,7 @@ const ICONS={
   fogadd:'<path d="M7 17h10a4 4 0 0 0 .4-8 6 6 0 0 0-11.4 1.6A3.3 3.3 0 0 0 7 17z" fill="currentColor" fill-opacity=".35"/>',
   fogcut:'<rect x="4" y="5" width="16" height="14" stroke-dasharray="3 2.5"/><path d="M9 12l2 2 4-4"/>',
   fogpoly:'<path d="M5 7l7-3 7 5-2 10H7z" fill="currentColor" fill-opacity=".35"/>',
+  template:'<path d="M3.5 12L19 4.5a15 15 0 0 1 0 15z" fill="currentColor" fill-opacity=".3"/><circle cx="3.8" cy="12" r="1.3" fill="currentColor"/>',
   fogcutpoly:'<path d="M5 7l7-3 7 5-2 10H7z" stroke-dasharray="3 2.5"/>',
   ping:'<circle cx="12" cy="12" r="2.6" fill="currentColor"/><circle cx="12" cy="12" r="7.5"/>',
   zin:'<circle cx="11" cy="11" r="6.5"/><path d="M11 8v6M8 11h6M16 16l4 4"/>',

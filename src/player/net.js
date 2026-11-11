@@ -92,9 +92,15 @@ function gameSend(type,data){netSend({...(data||{}),t:"game",game:GAME_INFO.id,t
 let PMapV=null;
 function initPlayerMap(){if(PMapV)return;PMapV=new MapView({role:"player",getMap:()=>Net.state==="online"||Net.state==="reconnecting"?Net.scene:null,
   canMove:t=>t.owner===PID&&Net.scene&&Net.scene.settings&&Net.scene.settings.playersMove!==false&&Net.state==="online",
-  canErase:d=>d.by===PID,onEvent:playerMapEvent,imgUrl:assetUrl,me:()=>({color:myColor(),name:Net.name,playerId:PID}),ringFor:t=>t.ring,activeTok:()=>Net.scene&&Net.scene.active})}
+  canErase:d=>d.by===PID,canTpl:t=>t.by===PID&&playerCanTpl(),canPlaceTpl:playerCanTpl,onEvent:playerMapEvent,imgUrl:assetUrl,me:()=>({color:myColor(),name:Net.name,playerId:PID}),ringFor:t=>t.ring,activeTok:()=>Net.scene&&Net.scene.active})}
+function playerCanTpl(){return !!(Net.scene&&Net.scene.settings&&Net.scene.settings.playersTemplates!==false&&Net.state==="online")}
 function playerMapEvent(type,d){const sc=Net.scene;if(!sc)return;
   switch(type){
+    case "tpl-add":d.by=PID;if(!Array.isArray(sc.templates))sc.templates=[];sc.templates.push(d);netSend({t:"tpl",op:"add",d});PMapV.invalidate();requestRender();return;
+    case "tpl-set":netSend({t:"tpl",op:"set",id:d.id,d});requestRender();return;
+    case "tpl-del":{const L=sc.templates||[],i=L.findIndex(x=>x.id===d&&x.by===PID);if(i>=0){L.splice(i,1);netSend({t:"tpl",op:"del",id:d});PMapV.invalidate();requestRender()}return}
+    case "tpl-select":requestRender();return;
+    case "tpl-denied":showNotice("The GM has turned off area templates for players.");return;
     case "move":PMapV.lastDragPos={x:d.x,y:d.y};netSend({t:"move",id:d.id,x:d.x,y:d.y,final:d.final});if(d.final)PMapV.lastDragPos=null;return;
     case "draw-add":if(sc.settings&&sc.settings.playersDraw===false){showNotice("The GM has turned off drawing for players.");return}d.by=PID;sc.drawings.push(d);netSend({t:"draw",op:"add",d});PMapV.invalidate();return;
     case "draw-del":{const i=sc.drawings.findIndex(x=>x.id===d.id&&x.by===PID);if(i>=0){sc.drawings.splice(i,1);netSend({t:"draw",op:"del",id:d.id});PMapV.invalidate()}return}
@@ -112,10 +118,10 @@ function afterRender(){
 function viewTable(){
   if(Net.state==="off"||Net.state==="connecting"&&!Net.scene)return joinView();
   const sc=Net.scene;const tool=ui.pTool||"select";const c=myChar();
-  const tools=[toolBtn("select",tool,"select","Select & move your token (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R). Shift+click to measure around corners"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
+  const tools=[toolBtn("select",tool,"select","Select & move your token (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R). Shift+click to measure around corners"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("template",tool,"template","Area template: circle, cone, line or square (T)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
     `<div class="mtool-sep"></div>`,`<button class="mtool" data-act="pmap-zoom" data-v="in" title="Zoom in (+)">${icon("zin")}</button>`,`<button class="mtool" data-act="pmap-zoom" data-v="out" title="Zoom out (−)">${icon("zout")}</button>`,`<button class="mtool" data-act="pmap-zoom" data-v="fit" title="Fit map (0)">${icon("fit")}</button>`,
     `<button class="mtool" data-act="pmap-find" title="Find my token">${icon("select")}</button>`].join("");
-  const sub=sc&&tool==="draw"?inkBar(PMapV,true):"";
+  const sub=sc&&tool==="draw"?inkBar(PMapV,true):sc&&tool==="template"?tplBar(PMapV,sc,false):"";
   const banner=Net.state==="reconnecting"?`<div class="map-banner">Reconnecting to the table…</div>`:Net.gmAway?`<div class="map-banner">The GM's app is offline. Waiting for them to come back…</div>`:"";
   const stage=`<div class="map-stage"><div class="map-slot" id="map-slot" data-keep></div>${sub}${banner}${!sc?`<div class="map-empty"><h3>No map yet</h3><p>The GM hasn't put a map on the table. You can still chat and roll.</p></div>`:""}</div>`;
   let mine="";

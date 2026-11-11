@@ -120,6 +120,55 @@ async def main():
         f=await gm.evaluate("curMap().grid")
         ok(abs(f["size"]-80)<1.5 and abs(f["ox"]-20)<2 and abs(f["oy"]-60)<2 and await gm.evaluate("ui.mapTool")=="select","dragging a box across 2 squares aligns the grid to the picture: "+str([f["size"],f["ox"],f["oy"]]))
         await gm.evaluate("g=>{Object.assign(curMap().grid,JSON.parse(g));delete curMap().grid.type;save();render();MapV.invalidate()}",g0)
+        # area templates (templates.js): shapes, who is caught, players' own, the game's presets
+        bad=await gm.evaluate("""(()=>{const bad=[],ok=(c,m)=>{if(!c)bad.push(m)},g={size:70,m:5,unit:'ft'},T=(o)=>Tpl.clean({x:700,y:700,size:2,width:1,angle:0,...o}),tok=(x,y,size=1)=>({id:'t',x,y,size});
+          let t=T({shape:'circle'});ok(Tpl.contains(t,g,840,700)&&!Tpl.contains(t,g,842,700)&&Tpl.contains(t,g,700,560),'circle edge');
+          t=T({shape:'cone',size:4});ok(Tpl.contains(t,g,700,700)&&Tpl.contains(t,g,980,700)&&!Tpl.contains(t,g,983,700)&&Tpl.contains(t,g,900,795)&&!Tpl.contains(t,g,900,812)&&!Tpl.contains(t,g,650,700),'cone as wide as it is long');
+          t=T({shape:'line',size:4,width:1,angle:Math.PI/2});ok(Tpl.contains(t,g,700,980)&&Tpl.contains(t,g,734,800)&&!Tpl.contains(t,g,737,800)&&!Tpl.contains(t,g,700,690),'line turned a quarter');
+          t=T({shape:'square',size:2});ok(Tpl.contains(t,g,840,840)&&!Tpl.contains(t,g,842,700)&&!Tpl.contains(t,g,690,700),'square from its corner');
+          t=T({shape:'circle'});GAME.map={};ok(Tpl.catches(t,g,tok(835,700))&&!Tpl.catches(t,g,tok(875,700)),'centre rule');
+          GAME.map={inside:'touch'};ok(Tpl.catches(t,g,tok(870,700))&&!Tpl.catches(t,g,tok(876,700))&&Tpl.catches(t,g,tok(905,700,2)),'touch rule');
+          GAME.map={inside:'cells'};const cs=Tpl.cells(t,g).length;ok(cs===12||cs===16,'a 10 ft radius covers '+cs+' squares');ok(Tpl.catches(t,g,tok(735,735))&&!Tpl.catches(t,g,tok(875,875)),'cells rule');
+          ok(Tpl.cells(T({shape:'square',size:3}),g).length===9&&Tpl.cells(T({shape:'circle',size:2}),{type:'hex-flat',size:70}).length>=7,'covered cells on squares and hexes');
+          GAME.map={templates:[{id:'fb',name:'Fireball',shape:'circle',size:20,color:'#ff4459'},{shape:'nope'}],origin:'corner'};const pr=Tpl.presets(g);ok(pr.length===1&&pr[0].size===4&&pr[0].name==='Fireball','a game preset in feet becomes cells');
+          const o=Tpl.snapOrigin(g,100,100);ok(o.x===70&&o.y===70,'origins on corners when the game says so');GAME.map={origin:'centre'};ok(Tpl.snapOrigin(g,100,100).x===105,'or on middles');
+          ok(Tpl.clean({shape:'blob'})===null&&Tpl.clean({shape:'cone',x:'a',size:1e9,color:'red',label:'<i>x'}).size===400&&Tpl.clean({shape:'cone',color:'red'}).color==='#f2a93b','cleaning');
+          ok(Tpl.describe(T({shape:'line',size:8,width:1,label:'Bolt'}),g)==='Bolt · 40 × 5 ft line','describe');
+          delete GAME.map;return bad})()""")
+        ok(bad==[],"template maths: the four shapes, the three rules for who is caught, presets and cleaning"+(": "+"; ".join(bad[:4]) if bad else ""))
+        async def mapdrag(pg,view,x1,y1,x2,y2):
+            a=await pg.evaluate("([v,x1,y1,x2,y2])=>{const V=v==='gm'?MapV:PMapV,r=V.canvas.getBoundingClientRect(),p=V.toScreen(x1,y1),q=V.toScreen(x2,y2);return [r.left+p.x,r.top+p.y,r.left+q.x,r.top+q.y]}",[view,x1,y1,x2,y2])
+            await pg.mouse.move(a[0],a[1]);await pg.mouse.down();await pg.mouse.move(a[2],a[3],steps=4);await pg.mouse.up();await pg.wait_for_timeout(350)
+        await gm.evaluate("(()=>{const m=curMap(),t=m.tokens[0];t.x=385;t.y=385;window.__caught=[];GAME.map={onCaught:(t,toks)=>window.__caught.push([t.shape,toks.length])};save();MapV.invalidate()})()")
+        await gm.click("[data-act=map-tool][data-t=template]");await gm.wait_for_timeout(100)
+        await mapdrag(gm,"gm",350,350,350+3*70,350)
+        x=await gm.evaluate("({t:curMap().templates,c:window.__caught,bar:document.querySelector('.map-sub').textContent})")
+        ok(len(x["t"])==1 and x["t"][0]["shape"]=="circle" and x["t"][0]["size"]==3 and x["t"][0]["by"]=="gm","the GM drags out a circle, sized in whole squares")
+        ok(x["c"]==[["circle",1]] and "Wren" in x["bar"],"the game is told who it caught, and the bar names them")
+        ok(await pl.evaluate("Net.scene.templates.length")==1,"players see the GM's template")
+        gid=x["t"][0]["id"]
+        await mapdrag(gm,"gm",350+3*70,350,350+5*70,350)
+        ok(await gm.evaluate("curMap().templates[0].size")==5,"dragging its square handle resizes it")
+        await mapdrag(gm,"gm",350,350,700,700)
+        ok(await gm.evaluate("(()=>{const t=curMap().templates[0];return t.x===700&&t.y===700})()"),"dragging its dot moves it")
+        await pl.click("[data-act=map-tool][data-t=template]");await pl.wait_for_timeout(100)
+        await pl.click("[data-act=tpl-shape][data-v=cone]")
+        await mapdrag(pl,"pl",1050,350,1050+4*70,350)
+        x=await gm.evaluate("curMap().templates.map(t=>[t.shape,t.by==='gm',t.size])")
+        ok(x==[["circle",True,5],["cone",False,4]],"a player places their own cone and the GM gets it: "+str(x))
+        await pl.evaluate("id=>netSend({t:'tpl',op:'del',id})",gid);await pl.evaluate("id=>netSend({t:'tpl',op:'set',id,d:{id,x:0,y:0,size:1}})",gid);await pl.wait_for_timeout(300)
+        ok(await gm.evaluate("(()=>{const t=curMap().templates[0];return curMap().templates.length===2&&t.x===700&&t.size===5})()"),"a player can't remove or change someone else's template")
+        await pl.keyboard.press("Delete");await pl.wait_for_timeout(300)
+        ok(await gm.evaluate("curMap().templates.length")==1,"but removes their own with Delete")
+        await gm.evaluate("st.host.playersTemplates=false;Host.lastScene='';save()");await gm.wait_for_timeout(400)
+        await mapdrag(pl,"pl",1050,350,1050+4*70,350)
+        ok(await gm.evaluate("curMap().templates.length")==1 and await pl.evaluate("Net.scene.templates.length")==1,"the GM can turn players' templates off")
+        tid=await gm.evaluate("(()=>{st.host.playersTemplates=true;return Monolith.map.addTemplate({shape:'circle',x:385,y:385,size:10,label:'Frag',color:'#ff4459'})})()")
+        x=await gm.evaluate("id=>({n:Monolith.map.caught(id).map(t=>t.label),t:Monolith.map.templates().find(t=>t.id===id),c:window.__caught.slice(-1)[0]})",tid)
+        ok(x["n"]==["Wren"] and x["t"]["size"]==5 and x["t"]["fixed"] and x["c"]==["circle",1],"a game places a template from its rules, sized in the map's units")
+        await gm.click("[data-act=tpl-clear]");await gm.wait_for_timeout(300)
+        ok(await gm.evaluate("curMap().templates.length")==0 and await pl.evaluate("Net.scene.templates.length")==0,"Clear all removes every template for everyone")
+        await gm.evaluate("delete GAME.map");await gm.click("[data-act=map-tool][data-t=select]");await pl.click("[data-act=map-tool][data-t=select]")
         ok(await gm.evaluate("appOlder('1.1.9',MONOLITH_VERSION)&&appOlder(undefined,MONOLITH_VERSION)&&!appOlder(MONOLITH_VERSION,MONOLITH_VERSION)&&!appOlder('99.0.0',MONOLITH_VERSION)"),"version comparison for the join check")
         why=await pl.evaluate("""new Promise(res=>{const ws=new WebSocket(Net.url.replace(/^http/i,'ws')+'/ws');
           ws.onopen=()=>ws.send(JSON.stringify({...helloMsg({character:null,peek:true}),app:'1.1.1',playerId:'old-app'}));

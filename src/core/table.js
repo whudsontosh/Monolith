@@ -10,6 +10,28 @@ function inkBar(view,allowErase=true){
     <span class="inks">${INK_COLORS.map(c=>`<button class="inkdot ${view.inkColor===c?"on":""}" style="background:${c}" data-act="ink-color" data-v="${c}" aria-label="Color ${c}"></button>`).join("")}</span>
     <span class="seg">${[[2,"Thin"],[4,"Med"],[8,"Thick"]].map(([w,l])=>`<button class="${view.inkWidth===w?"on":""}" data-act="ink-width" data-v="${w}">${l}</button>`).join("")}</span>
   </div>`}
+/* the bar under the Template tool: shape, the game's ready-made templates, color, and the selected one */
+function tableMapView(){return ROLE==="gm"?MapV:PMapV}
+function tplBar(view,m,isGm){const g=m.grid,pre=Tpl.presets(g),sel=(m.templates||[]).find(t=>t.id===view.tplSel),can=sel&&view.canTpl(sel),free=!view.tplPreset;
+  const names=sel?Tpl.caught(sel,g,(m.tokens||[]).filter(t=>isGm||!t.hidden)).map(t=>t.label||"Token"):[];
+  return `<div class="map-sub" role="toolbar" aria-label="Area templates">
+    <span class="seg">${[["circle","Circle"],["cone","Cone"],["line","Line"],["square","Square"]].map(([k,l])=>`<button class="${free&&view.tplShape===k?"on":""}" data-act="tpl-shape" data-v="${k}">${l}</button>`).join("")}</span>
+    ${pre.length?`<select data-act-change="tpl-preset" aria-label="Ready-made templates" style="width:auto;min-height:0;padding:4px 8px"><option value="">Ready-made…</option>${pre.map(p=>`<option value="${esc(p.id)}" ${view.tplPreset===p.id?"selected":""}>${esc(p.name)} (${esc(Tpl.describe({shape:p.shape,size:p.size,width:p.width,label:""},g).toLowerCase())})</option>`).join("")}</select>`:""}
+    ${free&&view.tplShape==="line"?`<label class="faint" style="font-size:12px;color:#a1a4b8;display:flex;align-items:center;gap:5px">Width <input type="number" min="0.5" step="0.5" value="${esc(Math.round(view.tplWidth*Grid.per(g)*100)/100)}" data-act-change="tpl-width" style="width:4.6em;min-height:0;padding:3px 6px" aria-label="Line width in ${esc(Grid.unit(g))}"> ${esc(Grid.unit(g))}</label>`:""}
+    <span class="inks">${INK_COLORS.map(c=>`<button class="inkdot ${view.tplColor===c?"on":""}" style="background:${c}" data-act="tpl-color" data-v="${c}" aria-label="Color ${c}"></button>`).join("")}</span>
+    ${sel?`<span style="font-size:12px;color:#eef0f6">${esc(Tpl.describe(sel,g))}${names.length?`: ${esc(names.slice(0,8).join(", "))}${names.length>8?"…":""}`:": nobody caught"}</span><button class="btn sm" data-act="tpl-del" ${can?"":"disabled"}>Remove</button>`
+      :`<span class="faint" style="font-size:12px;color:#a1a4b8">Drag on the map to place one. Drag its dot to move it, its square to turn or resize it.</span>`}
+    ${isGm&&(m.templates||[]).length?`<button class="btn sm" data-act="tpl-clear">Clear all</button>`:""}
+  </div>`}
+Object.assign(A,{
+  "tpl-shape":el=>{const v=tableMapView();v.tplShape=el.dataset.v;v.tplPreset="";render()},
+  "tpl-color":el=>{const v=tableMapView();v.tplColor=el.dataset.v;render()},
+  "tpl-del":()=>{const v=tableMapView();if(v.tplSel){const id=v.tplSel;v.tplSel=null;v.emit("tpl-del",id)}},
+});
+Object.assign(CHANGE,{
+  "tpl-preset":el=>{const v=tableMapView();v.tplPreset=el.value;render()},
+  "tpl-width":el=>{const v=tableMapView(),m=v.map;v.tplWidth=Math.max(.25,(Number(el.value)||0)/Grid.per(m&&m.grid))||1},
+});
 function logHTML(list,myPid){
   if(!list.length)return `<p class="faint" style="margin:0;font-size:13px">Rolls, chat and who joined show up here.</p>`;
   return list.slice(-80).map(e=>{

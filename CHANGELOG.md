@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0
+
+- **Area templates.** A new Template tool (T) lays a circle, cone, line or square on the map and rings
+  every token it catches, with a count beside it. Sizes snap to whole squares or hexes and read in
+  the map's units.
+- Drag a template's dot to move it, and its square handle to turn or resize it. Delete removes it.
+- Players can place and remove their own templates. The GM can turn that off in Map settings.
+- Games can add ready-made templates (a Fireball, a grenade), choose how "caught" is decided, and
+  place templates from their own rules.
+
 ## 1.2.0
 
 - **Hex maps and maps with no grid.** Pick squares, hexes (flat or pointed top) or no grid in Map
