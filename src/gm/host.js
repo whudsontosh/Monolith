@@ -72,7 +72,7 @@ function tokenRing(t){try{return RS.gm&&RS.gm.tokenRing?RS.gm.tokenRing(t)||null
 function activeTokId(m){if(!m||!(RS.gm&&RS.gm.activeTurn))return null;let a=null;try{a=RS.gm.activeTurn()}catch(e){}if(!a)return null;
   const t=m.tokens.find(x=>x.kind===a.kind&&x.ref===a.ref);return t?t.id:null}
 function sceneFor(){const m=activeMap();if(!m)return null;const showNpc=!!st.host.showNpcHealth;
-  return {id:m.id,name:m.name,asset:m.asset,w:m.w,h:m.h,bg:m.bg,grid:m.grid,fog:{on:!!m.fog.on,shapes:m.fog.shapes},drawings:m.drawings,templates:m.templates||[],
+  return {id:m.id,name:m.name,asset:m.asset,w:m.w,h:m.h,bg:m.bg,grid:m.grid,fog:{on:!!m.fog.on,shapes:m.fog.shapes},drawings:m.drawings,templates:m.templates||[],doors:Walls.doorsFor(m),
     tokens:m.tokens.filter(t=>!t.hidden).map(t=>({id:t.id,kind:t.kind,owner:t.owner||null,label:t.label,color:t.color,size:t.size||1,x:t.x,y:t.y,img:t.img||null,ring:(t.kind!=="npc"||showNpc)?tokenRing(t):null,
       ...(t.conds?{conds:Cond.cleanConds(t.conds)}:{}),...(t.elev?{elev:t.elev}:{}),...(t.auras&&t.auras.some(a=>a.see!=="gm")?{auras:Cond.cleanAuras(t.auras).filter(a=>a.see!=="gm")}:{})})),
     active:activeTokId(m),settings:{playersMove:st.host.playersMove!==false,playersDraw:st.host.playersDraw!==false,playersTemplates:st.host.playersTemplates!==false,playersConditions:st.host.playersConditions!==false}}}
@@ -139,13 +139,16 @@ function onMsg(conn,m){
       return}
     case "move":{if(!mp)return;const t=mp.tokens.find(x=>x.id===m.id);if(!t)return;
       if(!(st.host.playersMove!==false&&t.owner===info.playerId)){sendTo(conn,{t:"tok",id:t.id,x:t.x,y:t.y,final:true});return}
-      t.x=clamp(Number(m.x)||0,0,mp.w);t.y=clamp(Number(m.y)||0,0,mp.h);if(!t.hidden)broadcast({t:"tok",id:t.id,x:t.x,y:t.y,final:!!m.final},conn);
+      const go=wallCheckMove(mp,t,clamp(Number(m.x)||0,0,mp.w),clamp(Number(m.y)||0,0,mp.h),!!m.final);
+      t.x=go.x;t.y=go.y;if(!t.hidden)broadcast({t:"tok",id:t.id,x:t.x,y:t.y,final:!!m.final},conn);
+      if(go.hit&&m.final)sendTo(conn,{t:"tok",id:t.id,x:t.x,y:t.y,final:true}); // a wall was in the way: put the token where it stopped
       if(MapV)MapV.invalidate();if(m.final)save();return}
     case "ping":{const x=Number(m.x)||0,y=Number(m.y)||0;broadcast({t:"ping",x,y,color:info.color,name:info.name},conn);if(MapV&&curMap()===mp){MapV.addPing(x,y,info.color)}return}
     case "ruler":{const r=m.r&&Array.isArray(m.r.a)&&Array.isArray(m.r.b)?{a:m.r.a.slice(0,2).map(Number),b:m.r.b.slice(0,2).map(Number),via:Array.isArray(m.r.via)?m.r.via.slice(0,24).map(v=>Math.round(Number(v))||0):[]}:null;
       broadcast({t:"ruler",by:conn,name:info.name,color:info.color,r},conn);if(MapV)MapV.setRemoteRuler(conn,r?{...r,name:info.name,color:info.color}:null);return}
     case "tpl":playerTpl(conn,info,m,mp);return;
     case "tokset":playerTokSet(conn,info,m,mp);return;
+    case "door":playerDoor(conn,info,m,mp);return;
     case "draw":{if(!mp)return;
       if(m.op==="add"){if(st.host.playersDraw===false)return;const dr=cleanDrawing(m.d);if(!dr)return;dr.by=info.playerId;if(mp.drawings.some(x=>x.id===dr.id))dr.id=uid();
         mp.drawings.push(dr);if(mp.drawings.length>600)mp.drawings.shift();save();if(MapV)MapV.invalidate();return}
@@ -169,6 +172,7 @@ function gameBroadcast(type,data,except){broadcast({...(data||{}),t:"game",game:
 let MapV=null;
 function gmMapEvent(type,d){const m=curMap();if(!m)return;const live=m===activeMap()&&Host.status==="online";
   if(type.startsWith("tpl-")&&gmTplEvent(type,d,m))return;
+  if((type.startsWith("wall-")||type==="door")&&gmWallEvent(type,d,m))return;
   if(type==="token-menu"){if(d||ui.tokMenu){ui.tokMenu=d;if(d){ui.mapSel=d.id;MapV.sel=d.id}render()}return}
   switch(type){
     case "select":ui.mapSel=d;requestRender();return;
@@ -199,15 +203,16 @@ function viewMap(){
   if(!Desk)return `<div class="wrap" style="padding-block:40px"><div class="empty"><h3>Maps run in the desktop app</h3><p class="muted" style="margin:0">Open this game from the Monolith desktop app to use the battle map and online play.</p></div></div>`;
   const m=curMap();const tool=ui.mapTool||"select";const view=MapV;
   const tools=[toolBtn("select",tool,"select","Select & move (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R). Shift+click to measure around corners"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("template",tool,"template","Area template: circle, cone, line or square (T)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
-    `<div class="mtool-sep"></div>`,toolBtn("fog-rect",tool,"fogadd","Hide area with fog (F)"),toolBtn("fog-cut",tool,"fogcut","Reveal area"),toolBtn("fog-poly",tool,"fogpoly","Hide a shape (click points, double-click to finish)"),toolBtn("fog-cutpoly",tool,"fogcutpoly","Reveal a shape"),
+    `<div class="mtool-sep"></div>`,toolBtn("fog-rect",tool,"fogadd","Hide area with fog (F)"),toolBtn("fog-cut",tool,"fogcut","Reveal area"),toolBtn("fog-poly",tool,"fogpoly","Hide a shape (click points, double-click to finish)"),toolBtn("fog-cutpoly",tool,"fogcutpoly","Reveal a shape"),toolBtn("walls",tool,"walls","Walls and doors (W)"),
     `<div class="mtool-sep"></div>`,`<button class="mtool" data-act="map-zoom" data-v="in" title="Zoom in (+)">${icon("zin")}</button>`,`<button class="mtool" data-act="map-zoom" data-v="out" title="Zoom out (−)">${icon("zout")}</button>`,`<button class="mtool" data-act="map-zoom" data-v="fit" title="Fit map (0)">${icon("fit")}</button>`,
     `<button class="mtool ${view&&view.preview?"on":""}" data-act="map-preview" title="Preview what players see">${icon("eye")}</button>`].join("");
   let sub="";
   if(m&&tool==="draw")sub=inkBar(view);
   else if(m&&tool==="template")sub=tplBar(view,m,true);
+  else if(m&&tool==="walls")sub=wallBar(view,m);
   else if(m&&tool==="grid-fit")sub=`<div class="map-sub"><span class="label" style="color:#a1a4b8">Align grid</span><span class="faint" style="font-size:12px;color:#a1a4b8">Drag a box across exactly ${ui.fitCells||3} ${Grid.isHex(m.grid)?"hexes":"squares"} of your map picture, edge to edge${Grid.type(m.grid)==="hex-flat"?" (top to bottom)":Grid.isHex(m.grid)?" (left to right)":""}.</span><button class="btn sm" data-act="map-tool" data-t="select">Cancel</button></div>`;
   else if(m&&tool.startsWith("fog"))sub=`<div class="map-sub"><span class="label" style="color:#a1a4b8">Fog</span><button class="btn sm" data-act="fog-all">Cover whole map</button><button class="btn sm" data-act="fog-undo" ${m.fog.shapes.length?"":"disabled"}>Undo last</button><button class="btn sm" data-act="fog-clear" ${m.fog.shapes.length?"":"disabled"}>${ui.confirm==="fog-clear"?"Confirm: remove all fog":"Remove all fog"}</button><span class="faint" style="font-size:12px;color:#a1a4b8">${tool.includes("poly")?"Click points; click the first point or double-click to finish.":"Drag a box."} Players see fog as solid black.</span></div>`;
-  const stage=`<div class="map-stage"><div class="map-slot" id="map-slot" data-keep></div>${sub}${m&&ui.tokMenu?tokMenuHTML(m.tokens.find(t=>t.id===ui.tokMenu.id),m.grid,ui.tokMenu):""}${!m?`<div class="map-empty"><h3>No map yet</h3><p>Add a map image (PNG, JPG or WebP), or start with a blank grid.</p><div class="row" style="justify-content:center"><button class="btn primary" data-act="map-add-image">Add map image…</button><button class="btn" data-act="map-add-blank">Blank grid</button></div></div>`:""}</div>`;
+  const stage=`<div class="map-stage"><div class="map-slot" id="map-slot" data-keep></div>${sub}${m&&ui.tokMenu?tokMenuHTML(m.tokens.find(t=>t.id===ui.tokMenu.id),m.grid,ui.tokMenu):""}${!m?`<div class="map-empty"><h3>No map yet</h3><p>Add a map image (PNG, JPG or WebP), a Universal VTT file with its walls (.dd2vtt, .uvtt), or start with a blank grid.</p><div class="row" style="justify-content:center"><button class="btn primary" data-act="map-add-image">Add map image…</button><button class="btn" data-act="map-add-blank">Blank grid</button></div></div>`:""}</div>`;
   return `<div class="mapwrap"><nav class="map-tools" aria-label="Map tools">${tools}</nav>${stage}${mapResizeHandle()}<aside class="map-side">${mapSide(m)}</aside></div>`;
 }
 function mapSide(m){
@@ -216,7 +221,7 @@ function mapSide(m){
   const host=rg("ms-host",`<section class="ms"><div class="row" style="justify-content:space-between"><h3>Table</h3>${online?`<span class="chip green">Online · ${n}</span>`:Host.status==="starting"?`<span class="chip amber">Starting</span>`:`<span class="chip ink">Closed</span>`}</div>
     ${online?`<div class="row"><button class="btn sm primary" data-act="copy-invite">Copy invite code</button><button class="btn sm" data-act="open-modal" data-m="host">Host settings</button></div>`:`<button class="btn primary" data-act="open-modal" data-m="host">Host game…</button>`}
     ${players.length?`<div class="plist">${players.map(p=>`<div class="pl"><span class="dot" style="background:${esc(p.color)}"></span><b>${esc(p.handle||p.name)}</b><span class="faint">${esc(p.name)}</span></div>`).join("")}</div>`:online?`<p class="faint" style="margin:0;font-size:13px">Waiting for players. Send them the invite code.</p>`:""}</section>`);
-  const maps=rg("ms-maps",`<section class="ms"><div class="row" style="justify-content:space-between"><h3>Maps</h3><div class="row" style="gap:4px"><button class="btn sm" data-act="map-add-image">+ Image</button><button class="btn sm ghost" data-act="map-add-blank">+ Blank</button></div></div>
+  const maps=rg("ms-maps",`<section class="ms"><div class="row" style="justify-content:space-between"><h3>Maps</h3><div class="row" style="gap:4px"><button class="btn sm" data-act="map-add-image" title="A picture, or a Universal VTT file (.dd2vtt, .uvtt) with its walls and doors">+ Image</button><button class="btn sm ghost" data-act="map-add-blank">+ Blank</button></div></div>
     ${(st.maps||[]).length?`<div class="mlist">${st.maps.map(x=>`<div class="mi ${m&&x.id===m.id?"on":""}"><button class="mi-name" data-act="map-view" data-id="${esc(x.id)}">${esc(x.name)}</button>${x.id===st.activeMap?`<span class="chip red">Players see</span>`:`<button class="btn sm ghost" data-act="map-activate" data-id="${esc(x.id)}">Show to players</button>`}<button class="icon-btn mi-del" data-act="map-ask-del" data-id="${esc(x.id)}" aria-label="Delete ${esc(x.name)}" title="Delete this map">${icon("trash")}</button></div>`).join("")}</div>`:`<p class="faint" style="margin:0;font-size:13px">No maps yet.</p>`}</section>`);
   const extra=RS.gm&&RS.gm.mapSideExtra?RS.gm.mapSideExtra(m):"";
   if(!m)return host+extra+maps+tableLogSection();
@@ -315,12 +320,13 @@ function hostModalBody(){
   </div>`}
 
 /* ---------- actions ---------- */
-const mapFileIn=document.createElement("input");mapFileIn.type="file";mapFileIn.accept="image/png,image/jpeg,image/webp,image/gif";mapFileIn.hidden=true;document.body.appendChild(mapFileIn);
+const mapFileIn=document.createElement("input");mapFileIn.type="file";mapFileIn.accept="image/png,image/jpeg,image/webp,image/gif,.dd2vtt,.uvtt,.df2vtt";mapFileIn.hidden=true;document.body.appendChild(mapFileIn);
 let mapFileFor="map";let mapFileCb=null;
 /* pickImage(maxSide, cb(assetId)): for portraits and the like */
 function pickImage(maxSide,cb){if(!Host.port){showNotice("The table server isn't running yet. Try again in a moment.");return}mapFileFor={maxSide};mapFileCb=cb;mapFileIn.click()}
 mapFileIn.addEventListener("change",async()=>{const f=mapFileIn.files[0];mapFileIn.value="";if(!f)return;
-  try{showNotice("Loading image…");const r=await prepareMapImage(f,mapFileFor==="map"?4096:typeof mapFileFor==="object"?mapFileFor.maxSide||512:512);const id=await uploadAsset(r.blob,r.ext);
+  try{if(/\.(dd2vtt|uvtt|df2vtt)$/i.test(f.name)){if(mapFileFor!=="map")throw new Error("Pick a picture for this, not a map file.");await importUvtt(f);return}
+    showNotice("Loading image…");const r=await prepareMapImage(f,mapFileFor==="map"?4096:typeof mapFileFor==="object"?mapFileFor.maxSide||512:512);const id=await uploadAsset(r.blob,r.ext);
     if(mapFileFor==="map"){const nm=newMapData({name:cleanText(f.name.replace(/\.[^.]+$/,""),60)||"Map",asset:id,w:r.w,h:r.h,size:clamp(Math.round(r.w/24),24,200)});st.maps.push(nm);ui.mapId=nm.id;if(!st.activeMap)st.activeMap=nm.id;ui.mapSettingsOpen=true;save(true);render();MapV.fit();showNotice("Map added. Line the grid up under Map settings.")}
     else if(typeof mapFileFor==="object"){const cb=mapFileCb;mapFileCb=null;mapFileFor="map";if(cb)cb(id)}
     else{const m=curMap();const t=m&&m.tokens.find(x=>x.id===ui.mapSel);if(t){t.img=id;save();render();MapV.invalidate()}}}

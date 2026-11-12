@@ -170,6 +170,13 @@ conditions down by one and notes in the log when one runs out. `token` is a toke
 (the character or NPC it stands for). Call `endRound()` when your turn tracker starts a new round.
 Players can set conditions and height on their own tokens unless the GM turns that off.
 
+**Walls and doors** (1.5.0). The GM draws lines on a map with the Walls tool: walls, doors, windows,
+invisible walls and curtains (`Walls` in `src/core/walls.js`; stored in `map.walls`). They stop
+players' tokens, and from 1.6 they will block sight. Players are never sent the walls, only where
+the doors are and whether each is open, and their moves are checked on the GM's side. A game needs
+to do nothing. Maps made in tools that export Universal VTT files (`.dd2vtt`, `.uvtt`, `.df2vtt`)
+can be added with "+ Image": the picture, grid, walls and doors come in together.
+
 **3D dice.** When someone rolls, the dice the roll used are thrown across their own screen (a small
 physics simulation: they bounce off the window's edges and each other) and land on the rolled numbers; other people at the table get only the result. Every die rolled with the core's
 `d(n)` in the same moment as a `Dice.push` (including `Dice.raw` and `Dice.expr`) is shown, so games

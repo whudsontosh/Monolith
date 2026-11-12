@@ -214,6 +214,69 @@ async def main():
         ok(await pl.evaluate("id=>Net.scene.tokens.find(t=>t.id===id).auras.map(a=>a.r).join()",ids[0])=="10","a GM-only aura never reaches players")
         ok(await gm.evaluate("id=>Monolith.map.setCondition('npc1','marked',true,3)&&Monolith.map.hasCondition('npc1','marked')&&Monolith.map.setCondition('npc1','marked',false)&&!Monolith.map.hasCondition('npc1','marked')&&!Monolith.map.setCondition('npc1','nope',true)&&Monolith.map.tokens().length>=2",ids[0]),"a game sets and reads conditions from its rules")
         await gm.evaluate("id=>{const m=curMap();m.tokens=m.tokens.filter(t=>t.id!=='npc1');const b=m.tokens.find(t=>t.id===id);delete b.conds;delete b.auras;delete b.elev;save();render();MapV.invalidate()}",ids[0])
+        # walls and doors (walls.js): what stops a move, doors players can open, importing a map file
+        bad=await gm.evaluate("""(()=>{const bad=[],ok=(c,m)=>{if(!c)bad.push(m)},g={size:70,snap:true},W=(a,b,kind,x)=>Walls.clean({a,b,kind,...x}),tok={size:1};
+          let m={grid:g,w:2000,h:2000,walls:[W([490,210],[490,560],'wall')]};
+          ok(Walls.blocked(m,{x:385,y:385},{x:595,y:385})&&!Walls.blocked(m,{x:385,y:385},{x:455,y:385})&&!Walls.blocked(m,{x:385,y:100},{x:595,y:100}),'a wall blocks only what crosses it');
+          let s=Walls.stop(m,{x:385,y:385},{x:595,y:385},tok);ok(s.x===455&&s.y===385&&s.hit,'a blocked move stops in the last free square: '+s.x+','+s.y);
+          s=Walls.stop(m,{x:385,y:385},{x:455,y:455},tok);ok(s.x===455&&s.y===455&&!s.hit,'a free move is untouched');
+          ok(!Walls.blocked(m,{x:490,y:385},{x:560,y:385})&&Walls.blocked(m,{x:420,y:385},{x:490,y:385}),'you can step off a wall you stand on, but not come to rest on one');
+          ok(Walls.blocked(m,{x:455,y:175},{x:525,y:245}),'no slipping past the very end of a wall');
+          const kinds={wall:[1,1],door:[1,1],window:[1,0],invisible:[1,0],curtain:[0,1]};for(const k in kinds){const w=W([0,0],[0,70],k);ok(+Walls.blocksMove(w)===kinds[k][0]&&+Walls.blocksSight(w)===kinds[k][1],k+' stops the right things')}
+          const d=W([0,0],[0,70],'door',{open:true,locked:true});ok(!Walls.blocksMove(d)&&!Walls.blocksSight(d),'an open door stops nothing');
+          ok(Walls.clean({a:[0,0],b:[1,0]})===null&&Walls.clean({a:['x',0],b:[9,9]})===null&&Walls.clean({a:[0,0],b:[50,0],kind:'lava',open:true}).kind==='wall'&&!('open' in Walls.clean({a:[0,0],b:[50,0],kind:'wall',open:true})),'cleaning');
+          ok(JSON.stringify(Walls.doorsFor({walls:[W([0,0],[70,0],'wall'),{...W([0,0],[0,70],'door',{locked:true}),id:'d1'}]}))==='[{"id":"d1","a":[0,0],"b":[0,70],"open":false}]','players are told about doors only, never locks');
+          const e=Walls.snapEnd({grid:g,walls:[W([103,103],[300,300],'wall')]},100,100,1);ok(e.x===103&&e.y===103&&Walls.snapEnd({grid:g,walls:[]},100,100,1).x===105&&Walls.snapEnd({grid:g,walls:[]},75,72,1).x===70,'ends snap to other walls, then to the grid');
+          let bad2=0;for(const t of ['{}','nope','{"resolution":{"pixels_per_grid":70}}'])try{Walls.fromUvtt(t)}catch(err){bad2++}ok(bad2===3,'files that are not maps are refused');
+          return bad})()""")
+        ok(bad==[],"wall maths: crossing, stopping, the five kinds, snapping and cleaning"+(": "+"; ".join(bad[:4]) if bad else ""))
+        await gm.click("[data-act=map-tool][data-t=walls]");await gm.wait_for_timeout(100)
+        async def mclick(pg,x,y,**kw):
+            a=await pg.evaluate("([v,x,y])=>{const V=v?MapV:PMapV,r=V.canvas.getBoundingClientRect(),p=V.toScreen(x,y);return [r.left+p.x,r.top+p.y]}",[pg is gm,x,y])
+            await pg.mouse.click(a[0],a[1],**kw);await pg.wait_for_timeout(120)
+        await mclick(gm,492,208);await mclick(gm,488,563);await gm.click("[data-act=wall-kind][data-v=door]");await mclick(gm,490,560);await mclick(gm,490,630);await gm.wait_for_timeout(400)
+        x=await gm.evaluate("curMap().walls.map(w=>[w.kind,w.a,w.b])")
+        ok(x==[["wall",[490,210],[490,560]],["door",[490,560],[490,630]]],"the GM draws a wall and a door by clicking; ends snap to the grid and to each other: "+str(x))
+        x=await pl.evaluate("[('walls' in Net.scene),Net.scene.doors.length,Object.keys(Net.scene.doors[0]).sort().join()]")
+        ok(x==[False,1,"a,b,id,open"],"players are sent the door but never the walls: "+str(x))
+        await gm.evaluate("id=>{const t=curMap().tokens.find(t=>t.id===id);t.x=385;t.y=385;Host.lastScene='';save();MapV.invalidate()}",ids[0]);await gm.wait_for_timeout(400)
+        async def pmove(x,y):
+            await pl.evaluate("([id,x,y])=>{const t=Net.scene.tokens.find(t=>t.id===id);t.x=x;t.y=y;netSend({t:'move',id,x,y,final:false});netSend({t:'move',id,x,y,final:true})}",[ids[0],x,y]);await pl.wait_for_timeout(350)
+            return await gm.evaluate("id=>{const t=curMap().tokens.find(t=>t.id===id);return [t.x,t.y]}",ids[0]), await pl.evaluate("id=>{const t=Net.scene.tokens.find(t=>t.id===id);return [t.x,t.y]}",ids[0])
+        g_,p_=await pmove(595,385)
+        ok(g_==[455,385] and p_==[455,385],"a player's token stops at a wall, and their own screen is corrected: "+str([g_,p_]))
+        g_,p_=await pmove(455,595);g2,p2=await pmove(595,595)
+        ok(g_==[455,595] and g2==[455,595],"a closed door stops them too")
+        await pl.evaluate("window.__n=[];const _s=showNotice;showNotice=function(t){__n.push(t);return _s.apply(this,arguments)}")
+        did=await gm.evaluate("curMap().walls[1].id")
+        await gm.evaluate("id=>{const t=curMap().tokens.find(t=>t.id===id);t.x=105;t.y=105;curMap().walls[1].locked=true;Host.lastScene='';save()}",ids[0]);await gm.wait_for_timeout(350)
+        await pl.click("[data-act=map-tool][data-t=select]");await mclick(pl,490,595);await pl.wait_for_timeout(300)
+        await gm.evaluate("id=>{const t=curMap().tokens.find(t=>t.id===id);t.x=385;t.y=595;Host.lastScene='';save()}",ids[0]);await gm.wait_for_timeout(350)
+        await mclick(pl,490,595);await pl.wait_for_timeout(300)
+        ok(await pl.evaluate("__n.filter(Boolean).join('|')")=="Move next to the door first.|The door is locked." and not await gm.evaluate("!!curMap().walls[1].open"),"a player can't open a door from across the map, or a locked one: "+await pl.evaluate("__n.join('|')"))
+        await gm.click("[data-act=map-tool][data-t=select]");await gm.keyboard.down("Shift");await mclick(gm,490,595);await gm.keyboard.up("Shift")
+        ok(not await gm.evaluate("!!curMap().walls[1].locked"),"the GM locks and unlocks a door with Shift+click")
+        await mclick(pl,490,595);await pl.wait_for_timeout(350)
+        ok(await gm.evaluate("curMap().walls[1].open===true") and await pl.evaluate("Net.scene.doors[0].open"),"a player next to an unlocked door opens it")
+        g_,p_=await pmove(595,595)
+        ok(g_==[595,595],"and walks through")
+        await mclick(gm,490,595)
+        ok(not await gm.evaluate("!!curMap().walls[1].open"),"the GM closes it with a click")
+        await gm.evaluate("curMap().walls[0].kind='curtain'");g_,p_=await pmove(595,385);await gm.evaluate("curMap().walls[0].kind='window'");g2,p2=await pmove(385,385)
+        ok(g_==[595,385] and g2==[525,385],"a curtain doesn't stop movement, a window does: "+str([g_,g2]))
+        a=await gm.evaluate("id=>{const t=curMap().tokens.find(t=>t.id===id),r=MapV.canvas.getBoundingClientRect(),p=MapV.toScreen(t.x,t.y),q=MapV.toScreen(385,385);return [r.left+p.x,r.top+p.y,r.left+q.x,r.top+q.y]}",ids[0])
+        await gm.mouse.move(a[0],a[1]);await gm.mouse.down();await gm.mouse.move(a[2],a[3],steps=4);await gm.mouse.up();await gm.wait_for_timeout(300)
+        ok(await gm.evaluate("id=>curMap().tokens.find(t=>t.id===id).x",ids[0])==385,"the GM's own drags go through walls")
+        await gm.click("[data-act=map-tool][data-t=walls]");await mclick(gm,490,400);await gm.keyboard.press("Delete");await gm.wait_for_timeout(150)
+        ok(await gm.evaluate("curMap().walls.length")==1,"a selected wall is removed with Delete")
+        await gm.click("[data-act=walls-clear]");await gm.click("[data-act=walls-clear]");await gm.wait_for_timeout(350)
+        ok(await gm.evaluate("curMap().walls.length")==0 and await pl.evaluate("Net.scene.doors.length")==0,"Clear all asks once more, then removes every wall and door")
+        await gm.click("[data-act=map-tool][data-t=select]")
+        x=await gm.evaluate("""(async()=>{const before=ui.mapId,cv=document.createElement('canvas');cv.width=400;cv.height=300;cv.getContext('2d').fillRect(0,0,400,300);
+          const j={format:0.3,resolution:{map_origin:{x:0,y:0},map_size:{x:4,y:3},pixels_per_grid:100},line_of_sight:[[{x:1,y:1},{x:3,y:1},{x:3,y:2}]],portals:[{position:{x:2,y:2},bounds:[{x:1.5,y:2},{x:2.5,y:2}],closed:true}],lights:[{position:{x:2,y:1.5},range:4,color:'ffeccd8b'}],image:cv.toDataURL('image/png').split(',')[1]};
+          await importUvtt(new File([JSON.stringify(j)],'Crypt.dd2vtt'));const m=curMap(),out=[m.name,m.w,m.h,m.grid.size,m.walls.map(w=>[w.kind,w.a,w.b]),m.lights];
+          st.maps=st.maps.filter(x=>x!==m);ui.mapId=before;save();render();return out})()""")
+        ok(x==["Crypt",400,300,100,[["wall",[100,100],[300,100]],["wall",[300,100],[300,200]],["door",[150,200],[250,200]]],[{"x":200,"y":150,"r":4,"color":"#cd8b"+"" if False else x[5][0]["color"]}]] and x[5][0]["color"]=="#eccd8b","a Universal VTT file becomes a map with its grid, walls, door and lights: "+str(x[:5]))
         ok(await gm.evaluate("appOlder('1.1.9',MONOLITH_VERSION)&&appOlder(undefined,MONOLITH_VERSION)&&!appOlder(MONOLITH_VERSION,MONOLITH_VERSION)&&!appOlder('99.0.0',MONOLITH_VERSION)"),"version comparison for the join check")
         why=await pl.evaluate("""new Promise(res=>{const ws=new WebSocket(Net.url.replace(/^http/i,'ws')+'/ws');
           ws.onopen=()=>ws.send(JSON.stringify({...helloMsg({character:null,peek:true}),app:'1.1.1',playerId:'old-app'}));

@@ -71,6 +71,7 @@ function onNet(m){
       if(RS.player&&RS.player.onPeek)RS.player.onPeek(info);else{showNotice(`Connected to ${info.name}. Build your character, then join.`);A["new-character"]()}return}
     case "game":if(m.game===GAME_INFO.id&&typeof m.type==="string"&&RS.player&&RS.player.onMessage)RS.player.onMessage(m.type.slice(0,40),m);return;
     case "error":Net.manual=true;Net.peek=false;Net.err=m.reason||"The table refused the connection.";Net.state="off";render();return;
+    case "notice":showNotice(cleanText(m.text||"",140));return;
     case "kicked":if(Net.fetching)return;Net.manual=true;Net.peek=false;Net.err=m.reason||"You were removed from the table.";Net.state="off";Net.scene=null;render();return;
     case "end":Net.manual=true;Net.err=m.reason||"The GM closed the table.";Net.state="off";Net.scene=null;render();return;
   }
@@ -100,6 +101,7 @@ function tokPatch(id,p){const sc=Net.scene,t=sc&&sc.tokens.find(x=>x.id===id);if
 function playerMapEvent(type,d){const sc=Net.scene;if(!sc)return;
   switch(type){
     case "token-menu":if(d||ui.tokMenu){ui.tokMenu=d;render()}return;
+    case "door":netSend({t:"door",id:d.id});return;
     case "tpl-add":d.by=PID;if(!Array.isArray(sc.templates))sc.templates=[];sc.templates.push(d);netSend({t:"tpl",op:"add",d});PMapV.invalidate();requestRender();return;
     case "tpl-set":netSend({t:"tpl",op:"set",id:d.id,d});requestRender();return;
     case "tpl-del":{const L=sc.templates||[],i=L.findIndex(x=>x.id===d&&x.by===PID);if(i>=0){L.splice(i,1);netSend({t:"tpl",op:"del",id:d});PMapV.invalidate();requestRender()}return}

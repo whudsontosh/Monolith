@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0
+
+- **Walls.** A new Walls tool (W) for the GM: click to draw walls corner by corner. Players' tokens
+  stop at them. Players never see the lines.
+- **Doors.** A door stops tokens while it's closed. Players open and close a door by clicking it when
+  one of their tokens is next to it. The GM clicks a door to open it and Shift+clicks to lock it.
+- **Windows, invisible walls and curtains** for places that stop movement but not sight, or the other
+  way round. Sight starts to matter in the next release, lighting and vision.
+- **Maps with walls already drawn.** "+ Image" now also takes Universal VTT files (.dd2vtt, .uvtt,
+  .df2vtt) from map-making tools, and brings in the picture, the grid, the walls and the doors.
+
+The GM's own tokens are not stopped by walls.
+
 ## 1.4.0
 
 - **Conditions on tokens.** Right-click a token to mark it Stunned, Prone and so on. Badges show around
