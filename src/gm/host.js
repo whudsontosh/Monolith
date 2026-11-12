@@ -71,14 +71,21 @@ function tokenRing(t){try{return RS.gm&&RS.gm.tokenRing?RS.gm.tokenRing(t)||null
 /* whose turn it is (the game's combat tracker): rules.gm.activeTurn() -> {kind, ref} */
 function activeTokId(m){if(!m||!(RS.gm&&RS.gm.activeTurn))return null;let a=null;try{a=RS.gm.activeTurn()}catch(e){}if(!a)return null;
   const t=m.tokens.find(x=>x.kind===a.kind&&x.ref===a.ref);return t?t.id:null}
-function sceneFor(){const m=activeMap();if(!m)return null;const showNpc=!!st.host.showNpcHealth;
-  return {id:m.id,name:m.name,asset:m.asset,w:m.w,h:m.h,bg:m.bg,grid:m.grid,fog:{on:!!m.fog.on,shapes:m.fog.shapes},drawings:m.drawings,templates:m.templates||[],doors:Walls.doorsFor(m),
-    tokens:m.tokens.filter(t=>!t.hidden).map(t=>({id:t.id,kind:t.kind,owner:t.owner||null,label:t.label,color:t.color,size:t.size||1,x:t.x,y:t.y,img:t.img||null,ring:(t.kind!=="npc"||showNpc)?tokenRing(t):null,
+/* the scene for everyone, or (with light and sight on) for one player: pid, the views V, and whose view they get */
+function sceneFor(pid,V,who){const m=activeMap();if(!m)return null;const showNpc=!!st.host.showNpcHealth;
+  const sT=t=>!V||t.owner===pid||Vision.sees(V,who,m.grid,t),sP=(x,y)=>!V||Vision.seesPoint(V,who,x,y);
+  return {id:m.id,name:m.name,asset:m.asset,w:m.w,h:m.h,bg:m.bg,grid:m.grid,fog:{on:!!m.fog.on,shapes:m.fog.shapes},drawings:m.drawings,templates:(m.templates||[]).filter(t=>t.by===pid||sP(t.x,t.y)),vision:!!V,
+    // a door stands on the edge of what can be seen, so look just to either side of it
+    doors:Walls.doorsFor(m).filter(d=>{if(!V)return true;const c=Walls.mid(d),dx=d.b[0]-d.a[0],dy=d.b[1]-d.a[1],l=Math.hypot(dx,dy)||1,o=Grid.size(m.grid)*.4,nx=-dy/l*o,ny=dx/l*o;
+      return [[0,0],[nx,ny],[-nx,-ny]].some(([ox,oy])=>sP(c.x+ox,c.y+oy)||Vision.seesPoint(V,"seen",c.x+ox,c.y+oy))}),
+    tokens:m.tokens.filter(t=>!t.hidden&&sT(t)).map(t=>({id:t.id,kind:t.kind,owner:t.owner||null,label:t.label,color:t.color,size:t.size||1,x:t.x,y:t.y,img:t.img||null,ring:(t.kind!=="npc"||showNpc)?tokenRing(t):null,
       ...(t.conds?{conds:Cond.cleanConds(t.conds)}:{}),...(t.elev?{elev:t.elev}:{}),...(t.auras&&t.auras.some(a=>a.see!=="gm")?{auras:Cond.cleanAuras(t.auras).filter(a=>a.see!=="gm")}:{})})),
     active:activeTokId(m),settings:{playersMove:st.host.playersMove!==false,playersDraw:st.host.playersDraw!==false,playersTemplates:st.host.playersTemplates!==false,playersConditions:st.host.playersConditions!==false}}}
 function scheduleSync(){if(Host.status!=="online"||!Host.conns.size)return;clearTimeout(Host.syncT);Host.syncT=setTimeout(syncNow,120)}
 function syncNow(){if(Host.status!=="online"||!Host.conns.size)return;
-  const sc=sceneFor();const s=JSON.stringify(sc);if(s!==Host.lastScene){Host.lastScene=s;broadcast({t:"scene",scene:sc})}
+  const am=activeMap();if(Host.lastScene==="")visionForget();
+  if(am&&Vision.on(am)){Host.lastScene="vision";visionSync(am,false)} // light and sight: each player gets their own scene
+  else{const sc=sceneFor();const s=JSON.stringify(sc);if(s!==Host.lastScene){Host.lastScene=s;visionForget();broadcast({t:"scene",scene:sc})}}
   for(const [conn,i] of Host.conns){const c=pc(i.charId);if(c&&(Number(c.updatedAt)||0)>(Host.charSent[conn]||0)){Host.charSent[conn]=Number(c.updatedAt)||0;sendTo(conn,{t:"char",character:c})}}}
 function kick(conn,reason){adminSend({ctl:"kick",conn,reason})}
 
@@ -121,7 +128,7 @@ function onJoin(conn,h,silent){
   const m=activeMap();if(m)ensurePcToken(m,c,pid);
   Host.charSent[conn]=Number(c.updatedAt)||0;
   if(RS.gm&&RS.gm.beforeWelcome)try{RS.gm.beforeWelcome(conn)}catch(e){console.error(e)}
-  sendTo(conn,{t:"welcome",you:{playerId:pid,charId:c.id},table:{name:st.campaign.name||"the table",id:st.campaign.uid},scene:sceneFor(),log:(st.tableLog||[]).slice(-60),players:presence(),char:sendBack?c:null});
+  sendTo(conn,{t:"welcome",you:{playerId:pid,charId:c.id},table:{name:st.campaign.name||"the table",id:st.campaign.uid},scene:sceneForPlayer(pid),log:(st.tableLog||[]).slice(-60),players:presence(),char:sendBack?c:null});
   if(RS.gm&&RS.gm.onJoined)try{RS.gm.onJoined(conn,Host.conns.get(conn),c)}catch(e){console.error(e)}
   if(!silent){addLog({kind:"sys",text:`${name} joined as ${charLabel(c)}.`});showNotice(`${name} joined as ${charLabel(c)}.`)}
   Host.lastScene="";save(true);broadcastPresence();render();
@@ -140,7 +147,7 @@ function onMsg(conn,m){
     case "move":{if(!mp)return;const t=mp.tokens.find(x=>x.id===m.id);if(!t)return;
       if(!(st.host.playersMove!==false&&t.owner===info.playerId)){sendTo(conn,{t:"tok",id:t.id,x:t.x,y:t.y,final:true});return}
       const go=wallCheckMove(mp,t,clamp(Number(m.x)||0,0,mp.w),clamp(Number(m.y)||0,0,mp.h),!!m.final);
-      t.x=go.x;t.y=go.y;if(!t.hidden)broadcast({t:"tok",id:t.id,x:t.x,y:t.y,final:!!m.final},conn);
+      t.x=go.x;t.y=go.y;if(!t.hidden)tokTell(mp,t,!!m.final,conn);
       if(go.hit&&m.final)sendTo(conn,{t:"tok",id:t.id,x:t.x,y:t.y,final:true}); // a wall was in the way: put the token where it stopped
       if(MapV)MapV.invalidate();if(m.final)save();return}
     case "ping":{const x=Number(m.x)||0,y=Number(m.y)||0;broadcast({t:"ping",x,y,color:info.color,name:info.name},conn);if(MapV&&curMap()===mp){MapV.addPing(x,y,info.color)}return}
@@ -173,12 +180,13 @@ let MapV=null;
 function gmMapEvent(type,d){const m=curMap();if(!m)return;const live=m===activeMap()&&Host.status==="online";
   if(type.startsWith("tpl-")&&gmTplEvent(type,d,m))return;
   if((type.startsWith("wall-")||type==="door")&&gmWallEvent(type,d,m))return;
+  if(type.startsWith("light-")&&gmLightEvent(type,d,m))return;
   if(type==="token-menu"){if(d||ui.tokMenu){ui.tokMenu=d;if(d){ui.mapSel=d.id;MapV.sel=d.id}render()}return}
   switch(type){
     case "select":ui.mapSel=d;requestRender();return;
     case "token-dbl":ui.mapSel=d;render();setTimeout(()=>document.getElementById("tk-label")?.focus(),30);return;
     case "token-del":{const i=m.tokens.findIndex(t=>t.id===d);if(i>=0){m.tokens.splice(i,1);ui.mapSel=null;save();render();MapV.invalidate()}return}
-    case "move":{const t=m.tokens.find(x=>x.id===d.id);if(!t)return;if(live&&!t.hidden)broadcast({t:"tok",id:t.id,x:t.x,y:t.y,final:d.final});if(d.final){save();requestRender()}return}
+    case "move":{const t=m.tokens.find(x=>x.id===d.id);if(!t)return;if(live&&!t.hidden)tokTell(m,t,d.final);if(d.final){save();requestRender()}return}
     case "draw-add":d.by="gm";m.drawings.push(d);if(m.drawings.length>600)m.drawings.shift();save();MapV.invalidate();return;
     case "draw-del":{const i=m.drawings.findIndex(x=>x.id===d.id);if(i>=0){m.drawings.splice(i,1);save();MapV.invalidate()}return}
     case "fog-add":m.fog.shapes.push(d);m.fog.on=true;save();MapV.invalidate();return;
@@ -189,7 +197,7 @@ function gmMapEvent(type,d){const m=curMap();if(!m)return;const live=m===activeM
   }}
 function setMapTool(t){MapV.setTool(t);ui.mapTool=t;render()}
 function mapAssetUrl(id){return `http://127.0.0.1:${Host.port}/asset/${encodeURIComponent(id)}?k=${encodeURIComponent(Host.key)}`}
-function initMapView(){MapV=new MapView({role:"gm",getMap:curMap,canMove:()=>true,canErase:()=>true,canTpl:()=>true,canPlaceTpl:()=>true,canState:()=>true,onEvent:gmMapEvent,imgUrl:mapAssetUrl,
+function initMapView(){MapV=new MapView({role:"gm",getMap:curMap,canMove:()=>true,canErase:()=>true,canTpl:()=>true,canPlaceTpl:()=>true,canState:()=>true,sight:gmPreviewSight,onEvent:gmMapEvent,imgUrl:mapAssetUrl,
   me:()=>({color:GM_COLOR(),name:"GM",playerId:"gm"}),ringFor:tokenRing,activeTok:()=>activeTokId(curMap())})}
 function afterRender(){
   document.body.classList.toggle("mapmode",ui.tab==="map");
@@ -203,13 +211,14 @@ function viewMap(){
   if(!Desk)return `<div class="wrap" style="padding-block:40px"><div class="empty"><h3>Maps run in the desktop app</h3><p class="muted" style="margin:0">Open this game from the Monolith desktop app to use the battle map and online play.</p></div></div>`;
   const m=curMap();const tool=ui.mapTool||"select";const view=MapV;
   const tools=[toolBtn("select",tool,"select","Select & move (V)"),toolBtn("pan",tool,"pan","Pan (H, or hold Space)"),toolBtn("ruler",tool,"ruler","Measure (R). Shift+click to measure around corners"),toolBtn("draw",tool,"draw","Draw (D)"),toolBtn("template",tool,"template","Area template: circle, cone, line or square (T)"),toolBtn("ping",tool,"ping",`Ping (P, or ${IS_MAC?"Option":"Alt"}+click)`),
-    `<div class="mtool-sep"></div>`,toolBtn("fog-rect",tool,"fogadd","Hide area with fog (F)"),toolBtn("fog-cut",tool,"fogcut","Reveal area"),toolBtn("fog-poly",tool,"fogpoly","Hide a shape (click points, double-click to finish)"),toolBtn("fog-cutpoly",tool,"fogcutpoly","Reveal a shape"),toolBtn("walls",tool,"walls","Walls and doors (W)"),
+    `<div class="mtool-sep"></div>`,toolBtn("fog-rect",tool,"fogadd","Hide area with fog (F)"),toolBtn("fog-cut",tool,"fogcut","Reveal area"),toolBtn("fog-poly",tool,"fogpoly","Hide a shape (click points, double-click to finish)"),toolBtn("fog-cutpoly",tool,"fogcutpoly","Reveal a shape"),toolBtn("walls",tool,"walls","Walls and doors (W)"),toolBtn("lights",tool,"lights","Lights and darkness (L)"),
     `<div class="mtool-sep"></div>`,`<button class="mtool" data-act="map-zoom" data-v="in" title="Zoom in (+)">${icon("zin")}</button>`,`<button class="mtool" data-act="map-zoom" data-v="out" title="Zoom out (−)">${icon("zout")}</button>`,`<button class="mtool" data-act="map-zoom" data-v="fit" title="Fit map (0)">${icon("fit")}</button>`,
     `<button class="mtool ${view&&view.preview?"on":""}" data-act="map-preview" title="Preview what players see">${icon("eye")}</button>`].join("");
   let sub="";
   if(m&&tool==="draw")sub=inkBar(view);
   else if(m&&tool==="template")sub=tplBar(view,m,true);
   else if(m&&tool==="walls")sub=wallBar(view,m);
+  else if(m&&tool==="lights")sub=lightBar(view,m);
   else if(m&&tool==="grid-fit")sub=`<div class="map-sub"><span class="label" style="color:#a1a4b8">Align grid</span><span class="faint" style="font-size:12px;color:#a1a4b8">Drag a box across exactly ${ui.fitCells||3} ${Grid.isHex(m.grid)?"hexes":"squares"} of your map picture, edge to edge${Grid.type(m.grid)==="hex-flat"?" (top to bottom)":Grid.isHex(m.grid)?" (left to right)":""}.</span><button class="btn sm" data-act="map-tool" data-t="select">Cancel</button></div>`;
   else if(m&&tool.startsWith("fog"))sub=`<div class="map-sub"><span class="label" style="color:#a1a4b8">Fog</span><button class="btn sm" data-act="fog-all">Cover whole map</button><button class="btn sm" data-act="fog-undo" ${m.fog.shapes.length?"":"disabled"}>Undo last</button><button class="btn sm" data-act="fog-clear" ${m.fog.shapes.length?"":"disabled"}>${ui.confirm==="fog-clear"?"Confirm: remove all fog":"Remove all fog"}</button><span class="faint" style="font-size:12px;color:#a1a4b8">${tool.includes("poly")?"Click points; click the first point or double-click to finish.":"Drag a box."} Players see fog as solid black.</span></div>`;
   const stage=`<div class="map-stage"><div class="map-slot" id="map-slot" data-keep></div>${sub}${m&&ui.tokMenu?tokMenuHTML(m.tokens.find(t=>t.id===ui.tokMenu.id),m.grid,ui.tokMenu):""}${!m?`<div class="map-empty"><h3>No map yet</h3><p>Add a map image (PNG, JPG or WebP), a Universal VTT file with its walls (.dd2vtt, .uvtt), or start with a blank grid.</p><div class="row" style="justify-content:center"><button class="btn primary" data-act="map-add-image">Add map image…</button><button class="btn" data-act="map-add-blank">Blank grid</button></div></div>`:""}</div>`;
@@ -282,6 +291,7 @@ function mapSettings(m){const g=m.grid,gt=Grid.type(g),hex=Grid.isHex(g);
       <label><input type="checkbox" data-act-change="mm-bool" data-k="grid.show" ${g.show!==false?"checked":""}> Show grid</label>
       <label><input type="checkbox" data-act-change="mm-bool" data-k="grid.snap" ${g.snap!==false?"checked":""}> Snap tokens to the grid</label>
       <label><input type="checkbox" data-act-change="mm-bool" data-k="fog.on" ${m.fog.on?"checked":""}> Fog of war on</label>
+      ${visionSettingsHTML(m)}
       <label><input type="checkbox" data-act-change="host-bool" data-k="playersMove" ${st.host.playersMove!==false?"checked":""}> Players can move their own token</label>
       <label><input type="checkbox" data-act-change="host-bool" data-k="playersDraw" ${st.host.playersDraw!==false?"checked":""}> Players can draw</label>
       <label><input type="checkbox" data-act-change="host-bool" data-k="playersTemplates" ${st.host.playersTemplates!==false?"checked":""}> Players can place area templates</label>

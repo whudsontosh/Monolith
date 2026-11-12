@@ -16,13 +16,14 @@ function inPoly(x,y,p){let c=false;for(let i=0,j=p.length-2;i<p.length;j=i,i+=2)
 
 class MapView{
   constructor(cfg){
-    this.cfg=cfg; // {role:'gm'|'player', getMap(), canMove(tok), canErase(d), canTpl(t), canPlaceTpl(), canState(tok), onEvent(type,data), imgUrl(asset), me(){return {color,name}}, ringFor(tok), activeTok()}
+    this.cfg=cfg; // {role:'gm'|'player', getMap(), canMove(tok), canErase(d), canTpl(t), canPlaceTpl(), canState(tok), sight(), onEvent(type,data), imgUrl(asset), me(){return {color,name}}, ringFor(tok), activeTok()}
     this.el=document.createElement("div");this.el.className="mapview";this.el.tabIndex=0;
     this.canvas=document.createElement("canvas");this.el.appendChild(this.canvas);
     this.hud=document.createElement("div");this.hud.className="map-hud";this.el.appendChild(this.hud);
     this.ctx=this.canvas.getContext("2d");
     this.cam={x:0,y:0,z:1};this.cams={};this.mapId=null;
     this.tool="select";this.drawMode="pen";this.inkColor=INK_COLORS[0];this.inkWidth=4;
+    this.lightSel=null;
     this.wallKind="wall";this.wallChain=null;this.wallCur=null;this.wallSel=null;
     this.tplShape="circle";this.tplPreset="";this.tplColor="#f2a93b";this.tplWidth=1;this.tplSel=null;this.tplDraft=null;
     this.sel=null;this.drag=null;this.ruler=null;this.poly=null;this.cur=null;this.preview=false;
@@ -71,6 +72,8 @@ class MapView{
   hitDoor(w){const tol=13/this.cam.z;for(const d of this.doors()){const c=Walls.mid(d);if(Math.hypot(w.x-c.x,w.y-c.y)<tol&&!(this.cfg.role!=="gm"&&this.fogHides(this.map,c.x,c.y)))return d}return null}
   hitWall(w){const tol=7/this.cam.z;let best=null,bd=tol;for(const k of this.map.walls||[]){const d=segDist(w.x,w.y,k.a[0],k.a[1],k.b[0],k.b[1]);if(d<bd){bd=d;best=k}}return best}
   hitWallEnd(w){const tol=9/this.cam.z;for(const k of this.map.walls||[])for(const p of [k.a,k.b])if(Math.hypot(w.x-p[0],w.y-p[1])<tol)return {x:p[0],y:p[1],id:k.id};return null}
+  /* ---- lights (the GM's; vision.js works out what they show) ---- */
+  hitLight(w){const tol=13/this.cam.z,L=this.map.lights||[];for(let i=L.length-1;i>=0;i--)if(L[i]&&Math.hypot(w.x-L[i].x,w.y-L[i].y)<tol)return L[i];return null}
   endChain(){if(this.wallChain||this.wallCur){this.wallChain=null;this.wallCur=null;this.emit("wall-select",null);this.invalidate()}}
   /* ---- area templates (templates.js has the geometry) ---- */
   tpls(){const m=this.map;return (m&&m.templates)||[]}
@@ -113,6 +116,9 @@ class MapView{
       if(this.ruler&&this.ruler.path){const P=this.ruler.pts;P[P.length-1]=q;this.emitRuler(true);this.endRuler(2600);this.invalidate();return}
       this.ruler={pts:[q,q]};this.drag={k:"ruler"};this.emitRuler(true);this.invalidate();return}
     if(t==="grid-fit"){this.drag={k:"fitrect",a:w,b:w};return}
+    if(t==="lights"&&this.cfg.role==="gm"){const L=this.hitLight(w);
+      if(L){this.lightSel=L.id;this.drag={k:"light",id:L.id,aim:!!e.shiftKey&&!!L.angle,moved:false};this.emit("light-select",L.id);this.invalidate();return}
+      const q=e.shiftKey?{x:w.x,y:w.y}:Walls.snapEnd({walls:[],grid:m.grid},w.x,w.y,this.cam.z);this.emit("light-add",{x:q.x,y:q.y});return}
     if(t==="walls"&&this.cfg.role==="gm"){const z=this.cam.z;
       // not drawing yet: grab a wall's end (drag moves it, a click starts drawing from it), or pick a wall
       if(!this.wallChain){const end=e.shiftKey?null:this.hitWallEnd(w);
@@ -156,6 +162,9 @@ class MapView{
       else{pts[2]=w.x;pts[3]=w.y}
       this.invalidate();return}
     if(d.k==="fogrect"||d.k==="fitrect"){d.b=w;this.invalidate();return}
+    if(d.k==="light"){const l=(m.lights||[]).find(x=>x&&x.id===d.id);if(!l){this.drag=null;return}
+      if(d.aim)l.dir=Math.atan2(w.y-l.y,w.x-l.x);else{const q=e.shiftKey?{x:w.x,y:w.y}:Walls.snapEnd({walls:[],grid:m.grid},w.x,w.y,this.cam.z);l.x=q.x;l.y=q.y}
+      d.moved=true;this.invalidate();return}
     if(d.k==="wallend"){if(!d.moved&&Math.hypot(w.x-d.x,w.y-d.y)*this.cam.z<5)return;
       // every wall that ends at this point moves with it
       if(!d.ends){d.ends=[];for(const k of m.walls||[])for(const en of ["a","b"])if(Math.hypot(k[en][0]-d.x,k[en][1]-d.y)<.6)d.ends.push([k.id,en])}
@@ -179,6 +188,7 @@ class MapView{
       if(m.grid.snap!==false){const s=Grid.snap(m.grid,tok.x,tok.y,tok.size);tok.x=clamp(s.x,0,m.w);tok.y=clamp(s.y,0,m.h)}
       this.emit("move",{id:tok.id,x:Math.round(tok.x),y:Math.round(tok.y),final:true});this.invalidate();return}
     if(d.k==="ruler"){this.endRuler(1600);return}
+    if(d.k==="light"){const l=(m.lights||[]).find(x=>x&&x.id===d.id);if(l&&d.moved)this.emit("light-set",{id:l.id,x:l.x,y:l.y,dir:l.dir||0});this.invalidate();return}
     if(d.k==="wallend"){if(d.moved){const ids=d.ends.map(x=>x[0]);this.emit("wall-set",(m.walls||[]).filter(k=>ids.includes(k.id)).map(k=>({id:k.id,a:k.a,b:k.b})))}
       else{this.wallChain={x:d.x,y:d.y};this.wallCur=this.wallChain;this.wallSel=null;this.emit("wall-select",null)}
       this.invalidate();return}
@@ -207,6 +217,7 @@ class MapView{
     const k=e.key.toLowerCase();
     if((k==="escape"||k==="enter")&&this.wallChain){this.endChain();return}
     if(k==="escape"&&this.tool==="walls"&&this.wallSel){this.wallSel=null;this.emit("wall-select",null);this.invalidate();return}
+    if((k==="delete"||k==="backspace")&&this.tool==="lights"&&this.lightSel){const id=this.lightSel;this.lightSel=null;this.emit("light-del",id);return}
     if((k==="delete"||k==="backspace")&&this.tool==="walls"&&this.wallSel){const id=this.wallSel;this.wallSel=null;this.emit("wall-del",id);return}
     if(k==="escape"){if(this.ruler&&this.ruler.path){this.endRuler(0)}else if(this.poly){this.poly=null;this.invalidate()}else if(this.sel){this.sel=null;this.emit("select",null);this.invalidate()}return}
     if(k==="enter"&&this.poly){this.finishPoly();return}
@@ -215,7 +226,7 @@ class MapView{
     if(k==="+"||k==="="){this.zoomBy(1.2);return}
     if(k==="-"||k==="_"){this.zoomBy(1/1.2);return}
     if(k==="0"){this.fit();return}
-    const map={v:"select",h:"pan",r:"ruler",d:"draw",p:"ping",t:"template"};if(this.cfg.role==="gm"){map.f="fog-rect";map.w="walls"}
+    const map={v:"select",h:"pan",r:"ruler",d:"draw",p:"ping",t:"template"};if(this.cfg.role==="gm"){map.f="fog-rect";map.w="walls";map.l="lights"}
     if(map[k]&&!e.ctrlKey&&!e.metaKey){this.emit("tool",map[k])}
   }
   emitRuler(force){const now=performance.now();if(!force&&now-this.lastRuler<60)return;this.lastRuler=now;const r=this.ruler;if(!r)return;
@@ -262,7 +273,9 @@ class MapView{
     // tokens
     const me=this.cfg.me();const active=this.cfg.activeTok?this.cfg.activeTok():null;const now=performance.now();
     const labels=[];const caughtBy=new Map();
+    const sight=playerView&&this.cfg.sight?this.cfg.sight():null; // light and sight: what this viewer sees now and has seen
     const drawTok=(t)=>{const r=this.tokR(t);const hidden=t.hidden;if(hidden&&this.cfg.role!=="gm")return;
+      if(sight&&sight.sees&&!sight.sees(t))return;
       c.save();if(hidden)c.globalAlpha=0.45;
       if(t.id===active){c.beginPath();c.arc(t.x,t.y,r+Math.max(6/z,r*0.18),0,Math.PI*2);c.fillStyle=TH.activeGlow;c.fill()}
       c.beginPath();c.arc(t.x,t.y,r*0.94,0,Math.PI*2);c.fillStyle=t.color||"#3d4352";c.fill();
@@ -296,6 +309,14 @@ class MapView{
       c.fillStyle=d.locked&&!playerView?"#ff4459":d.open?"#4cc98c":"#ff7a3c";c.strokeStyle="#0b0c11";c.lineWidth=2/z;c.beginPath();c.arc(cm.x,cm.y,(d.locked&&!playerView?7:5.5)/z,0,Math.PI*2);c.fill();c.stroke();
       if(d.locked&&!playerView){c.strokeStyle="#fff";c.lineWidth=1.6/z;c.beginPath();c.moveTo(cm.x-3/z,cm.y-3/z);c.lineTo(cm.x+3/z,cm.y+3/z);c.moveTo(cm.x+3/z,cm.y-3/z);c.lineTo(cm.x-3/z,cm.y+3/z);c.stroke()}
       c.restore()}
+    // the GM's lights: only while the Lights tool is in hand
+    if(this.tool==="lights"&&this.cfg.role==="gm"&&!playerView){const per=Grid.per(g),gs=Grid.size(g);c.save();
+      for(const l of m.lights||[]){if(!l||l.bright==null)continue;const on=l.id===this.lightSel,R=(l.bright+l.dim)/per*gs,B=l.bright/per*gs,a0=l.angle?(l.dir||0)-l.angle*Math.PI/360:0,a1=l.angle?(l.dir||0)+l.angle*Math.PI/360:Math.PI*2;
+        c.strokeStyle=l.color;c.globalAlpha=on?1:.7;c.lineWidth=(on?2.5:1.5)/z;c.setLineDash([9/z,7/z]);c.beginPath();if(l.angle)c.moveTo(l.x,l.y);c.arc(l.x,l.y,R,a0,a1);if(l.angle)c.closePath();c.stroke();
+        c.setLineDash([]);if(B>0&&B<R){c.globalAlpha=on?.8:.45;c.beginPath();c.arc(l.x,l.y,B,a0,a1);c.stroke()}
+        c.globalAlpha=1;c.fillStyle="#0b0c11";c.beginPath();c.arc(l.x,l.y,9/z,0,Math.PI*2);c.fill();c.fillStyle=l.color;c.beginPath();c.arc(l.x,l.y,6/z,0,Math.PI*2);c.fill();
+        if(on){c.strokeStyle="#fff";c.lineWidth=2/z;c.beginPath();c.arc(l.x,l.y,10.5/z,0,Math.PI*2);c.stroke()}}
+      c.restore()}
     // the GM's walls: only while the Walls tool is in hand
     if(this.tool==="walls"&&this.cfg.role==="gm"&&!playerView){c.save();c.lineCap="round";
       for(const k of m.walls||[]){const L=Walls.LOOK[k.kind]||Walls.LOOK.wall,on=k.id===this.wallSel;c.strokeStyle="#0b0c11";c.lineWidth=(on?8:6)/z;c.setLineDash([]);c.beginPath();c.moveTo(k.a[0],k.a[1]);c.lineTo(k.b[0],k.b[1]);c.stroke();
@@ -323,6 +344,8 @@ class MapView{
     toks.filter(t=>!(playerView&&mine(t))).forEach(drawTok);
     // fog
     if(m.fog&&m.fog.on&&(m.fog.shapes||[]).length){const fc=this.fogLayer(m);c.save();c.globalAlpha=playerView?1:0.55;c.imageSmoothingEnabled=true;c.drawImage(fc,0,0,m.w,m.h);c.restore()}
+    // darkness: black where the party has never been, dimmed where it has, clear where this viewer sees now
+    if(sight){if(sight.vis||sight.seen)Vision.drawDark(c,m,sight.vis,sight.seen);else{c.fillStyle="#04050a";c.fillRect(0,0,m.w,m.h)}}
     const ownLabels=[];
     if(playerView){const before=labels.length;toks.filter(mine).forEach(drawTok);ownLabels.push(...labels.splice(before))}
     // fog editing previews

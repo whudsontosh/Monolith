@@ -177,6 +177,26 @@ the doors are and whether each is open, and their moves are checked on the GM's 
 to do nothing. Maps made in tools that export Universal VTT files (`.dd2vtt`, `.uvtt`, `.df2vtt`)
 can be added with "+ Image": the picture, grid, walls and doors come in together.
 
+**Light and sight** (1.6.0). On a map with walls, each player sees only what their own tokens can
+see: sight is blocked by walls, closed doors and curtains, and on a dim or dark map it needs light
+(lights the GM places with the Lights tool, lights tokens carry, or a token's dark sight). Where the
+party has been stays on the map, dimmed. The GM's app works all of this out (`Vision` in
+`src/core/vision.js`) and sends each player only the tokens, doors and templates in their view,
+plus two small pictures: what they see now and what the party has seen. Players are never sent
+walls or lights. Map settings has the switch (automatic, on, off), the map's light level and
+"Forget explored areas". A game can fill a token's sight and light in from its character with one
+more optional field in `map`; whatever the GM sets on the token wins:
+
+```js
+map:{
+  sightFor(character, token){          // GM side; distances in the map's units
+    return {dark:60,                   // how far it sees with no light at all
+            range:0,                   // how far it sees at all (0 or absent: no limit)
+            light:{bright:20, dim:20}} // a light it carries: bright reach, then how much further dim goes
+  },
+}
+```
+
 **3D dice.** When someone rolls, the dice the roll used are thrown across their own screen (a small
 physics simulation: they bounce off the window's edges and each other) and land on the rolled numbers; other people at the table get only the result. Every die rolled with the core's
 `d(n)` in the same moment as a `Dice.push` (including `Dice.raw` and `Dice.expr`) is shown, so games

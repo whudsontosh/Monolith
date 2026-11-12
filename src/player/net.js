@@ -51,7 +51,7 @@ async function fetchGameVersion(m){
   }catch(e){ssSet("monolith-rejoin",null);Net.fetching=null;Net.err=String(e&&e.message||e);render()}}
 function onNet(m){
   switch(m.t){
-    case "welcome":Net.state="online";Net.retry=0;Net.gmAway=false;Net.table=cleanText(m.table&&m.table.name,60)||Net.table;Net.tableId=cleanText(m.table&&m.table.id,40);Net.scene=m.scene||null;Net.log=m.log||[];Net.players=m.players||[];
+    case "welcome":Net.sight=null;Net.state="online";Net.retry=0;Net.gmAway=false;Net.table=cleanText(m.table&&m.table.name,60)||Net.table;Net.tableId=cleanText(m.table&&m.table.id,40);Net.scene=m.scene||null;Net.log=m.log||[];Net.players=m.players||[];
       if(m.char)applyGmChar(m.char,true);
       if(ui.view!=="table"){ui.view="table"}render();showNotice(`Joined ${Net.table}.`);if(PMapV)PMapV.invalidate();return;
     case "scene":Net.scene=m.scene||null;if(PMapV){if(PMapV.drag&&PMapV.drag.k==="tok"&&Net.scene){const t=Net.scene.tokens.find(x=>x.id===PMapV.drag.id);const cur=PMapV.lastDragPos;if(t&&cur){t.x=cur.x;t.y=cur.y}}PMapV.invalidate()}requestRender();return;
@@ -72,6 +72,7 @@ function onNet(m){
     case "game":if(m.game===GAME_INFO.id&&typeof m.type==="string"&&RS.player&&RS.player.onMessage)RS.player.onMessage(m.type.slice(0,40),m);return;
     case "error":Net.manual=true;Net.peek=false;Net.err=m.reason||"The table refused the connection.";Net.state="off";render();return;
     case "notice":showNotice(cleanText(m.text||"",140));return;
+    case "sight":playerSight(m);return;
     case "kicked":if(Net.fetching)return;Net.manual=true;Net.peek=false;Net.err=m.reason||"You were removed from the table.";Net.state="off";Net.scene=null;render();return;
     case "end":Net.manual=true;Net.err=m.reason||"The GM closed the table.";Net.state="off";Net.scene=null;render();return;
   }
@@ -93,8 +94,12 @@ function gameSend(type,data){netSend({...(data||{}),t:"game",game:GAME_INFO.id,t
 let PMapV=null;
 function initPlayerMap(){if(PMapV)return;PMapV=new MapView({role:"player",getMap:()=>Net.state==="online"||Net.state==="reconnecting"?Net.scene:null,
   canMove:t=>t.owner===PID&&Net.scene&&Net.scene.settings&&Net.scene.settings.playersMove!==false&&Net.state==="online",
-  canErase:d=>d.by===PID,canTpl:t=>t.by===PID&&playerCanTpl(),canPlaceTpl:playerCanTpl,canState:playerCanState,onEvent:playerMapEvent,imgUrl:assetUrl,me:()=>({color:myColor(),name:Net.name,playerId:PID}),ringFor:t=>t.ring,activeTok:()=>Net.scene&&Net.scene.active})}
+  canErase:d=>d.by===PID,canTpl:t=>t.by===PID&&playerCanTpl(),canPlaceTpl:playerCanTpl,canState:playerCanState,sight:()=>Net.scene&&Net.scene.vision?(Net.sight||{vis:null,seen:null}):null,onEvent:playerMapEvent,imgUrl:assetUrl,me:()=>({color:myColor(),name:Net.name,playerId:PID}),ringFor:t=>t.ring,activeTok:()=>Net.scene&&Net.scene.active})}
 function playerCanTpl(){return !!(Net.scene&&Net.scene.settings&&Net.scene.settings.playersTemplates!==false&&Net.state==="online")}
+/* light and sight: the GM sends two small pictures of the map, what this player sees now and what the party has seen.
+   Each replaces the last one once it has loaded, so the map never flashes. */
+function playerSight(m){const ok=u=>typeof u==="string"&&u.length<3e6&&/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(u);Net.sight=Net.sight||{vis:null,seen:null};Net.sightN=(Net.sightN||0)+1;const n=Net.sightN;
+  for(const k of ["vis","seen"]){if(!ok(m[k]))continue;const img=new Image();img.onload=()=>{if(k==="vis"&&n!==Net.sightN)return;Net.sight[k]=img;if(PMapV)PMapV.invalidate()};img.src=m[k]}}
 function playerCanState(t){return !!(t&&t.owner===PID&&Net.scene&&Net.scene.settings&&Net.scene.settings.playersConditions!==false&&Net.state==="online")}
 /* a player changes their own token: shown at once, and the GM is asked to make it so */
 function tokPatch(id,p){const sc=Net.scene,t=sc&&sc.tokens.find(x=>x.id===id);if(!t||!playerCanState(t))return;if(!Cond.apply(t,p))return;netSend({t:"tokset",id,p});if(PMapV)PMapV.invalidate();render()}

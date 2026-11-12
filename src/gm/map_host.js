@@ -1,6 +1,6 @@
 /* ============================== GM: MAP EXTRAS ==============================
    The GM's side of what the map gained after 1.1: area templates (1.3), and token conditions,
-   height and auras (1.4), walls and doors (1.5). The GM's app is the only
+   height and auras (1.4), walls and doors (1.5), light and sight (1.6). The GM's app is the only
    authority: players ask, and what they send is cleaned and checked here before it is applied. */
 function tplList(m){if(!Array.isArray(m.templates))m.templates=[];return m.templates}
 function tplTell(m,t){try{const f=GAME&&GAME.map&&GAME.map.onCaught;if(typeof f==="function")f({...t},Tpl.caught(t,m.grid,m.tokens||[]))}catch(e){console.error(e)}}
@@ -77,7 +77,7 @@ async function importUvtt(file){showNotice("Reading the map…");const u=Walls.f
   const r=await prepareMapImage(new Blob([bytes]),4096),id=await uploadAsset(r.blob,r.ext),k=r.w/(u.cols*u.ppg);
   const nm=newMapData({name:cleanText(file.name.replace(/\.[^.]+$/,""),60)||"Map",asset:id,w:r.w,h:r.h,size:Math.round(u.ppg*k*100)/100});
   nm.walls=u.walls.map(w=>Walls.clean({...w,a:[w.a[0]*k,w.a[1]*k],b:[w.b[0]*k,w.b[1]*k]},nm)).filter(Boolean);
-  if(u.lights.length)nm.lights=u.lights.map(l=>({x:Math.round(l.x*k),y:Math.round(l.y*k),r:l.r,color:l.color})); // kept for lighting (1.6)
+  if(u.lights.length){nm.lights=u.lights.map(l=>({x:Math.round(l.x*k),y:Math.round(l.y*k),r:l.r,color:l.color}));nm.lights=Vision.lights(nm)}
   st.maps.push(nm);ui.mapId=nm.id;if(!st.activeMap)st.activeMap=nm.id;save(true);render();MapV.fit();
   const doors=nm.walls.filter(w=>w.kind==="door").length;showNotice(`Map added with ${nm.walls.length-doors} wall${nm.walls.length-doors===1?"":"s"} and ${doors} door${doors===1?"":"s"}. Pick the Walls tool to see them.`)}
 
@@ -101,7 +101,7 @@ function tokAuraSet(i,patch){const t=selTok();if(!t)return;const L=Cond.cleanAur
   Cond.apply(t,{auras:L});save();MapV.invalidate();render()}
 /* the token panel's extra rows */
 function tokExtrasHTML(m,t){const g=m.grid,au=Cond.cleanAuras(t.auras),u=esc(Grid.unit(g));
-  return `<div class="field"><span class="label">Conditions and height</span>${tokStateHTML(t,g)}</div>
+  return `<div class="field"><span class="label">Conditions and height</span>${tokStateHTML(t,g)}</div>${tokSightHTML(m,t)}
     <div class="field"><div class="row" style="justify-content:space-between"><span class="label">Auras</span>${au.length<3?`<button class="btn sm ghost" data-act="tk-aura-add">+ Aura</button>`:""}</div>
       ${au.map((a,i)=>{const inside=Cond.auraCatches(g,t,a,m.tokens).map(k=>k.label||"Token");
         return `<div class="tka"><div class="row" style="gap:6px;flex-wrap:nowrap"><input type="number" min="0.5" step="any" value="${a.r}" data-act-change="tk-aura" data-i="${i}" data-k="r" aria-label="Aura ${i+1} reach in ${u}" style="width:5em"><span class="faint">${u}</span>
@@ -134,3 +134,94 @@ Monolith.map={
   templates(){const m=curMap();return m?tplList(m).map(t=>({...t})):[]},
   caught(id){const m=curMap();if(!m)return [];const t=tplList(m).find(x=>x.id===id);return t?Tpl.caught(t,m.grid,m.tokens||[]):[]},
 };
+
+/* ============================== light and sight (vision.js) ==============================
+   With light and sight on for the map on the table, every player gets their own scene: only the tokens,
+   doors and templates their tokens can see, plus two small pictures: what they see now, and what the
+   party has seen before. A player with no token of their own gets the party's view. */
+const VIS={cache:{},seen:{},t:0,saveT:0,n:0};
+function eyesOfTok(t){return Vision.eyes(t,t.kind==="pc"&&t.ref?pc(t.ref):null)}
+function lightList(m){if(!Array.isArray(m.lights))m.lights=[];else if(m.lights.some(l=>!l||!l.id||l.bright==null))m.lights=Vision.lights(m);return m.lights}
+/* the picture of where the party has been, kept between sessions in map.seen */
+function seenFor(m,W,H){let s=VIS.seen[m.id];
+  if(!s||s.c.width!==W||s.c.height!==H){const c=Vision.canvas(W,H);if(s)c.getContext("2d").drawImage(s.c,0,0,W,H);s=VIS.seen[m.id]={c,src:s?s.src:null}}
+  if(m.seen&&s.src!==m.seen&&!s.loading){s.loading=true;const url=m.seen,img=new Image();
+    img.onload=()=>{s.c.getContext("2d").drawImage(img,0,0,s.c.width,s.c.height);s.loading=false;s.src=url;delete VIS.cache[m.id];if(MapV)MapV.invalidate();scheduleSync()};
+    img.onerror=()=>{s.loading=false;s.src=url};img.src=url}
+  return s}
+/* everyone's view of a map, worked out again only when something it depends on has changed */
+function visionFor(m){lightList(m);const key=Vision.key(m,eyesOfTok);let c=VIS.cache[m.id];if(c&&c.key===key)return c.V;
+  const V=Vision.compute(m,eyesOfTok),s=seenFor(m,V.w,V.h),live=m===activeMap()&&Host.status==="online";
+  if(live){s.c.getContext("2d").drawImage(V.party,0,0);   // exploring only counts on the map that is on the table
+    clearTimeout(VIS.saveT);VIS.saveT=setTimeout(()=>{try{const u=s.c.toDataURL("image/png");if(u!==m.seen){m.seen=u;s.src=u;save()}}catch(e){console.error(e)}},2500)}
+  V.seen=s.c;VIS.cache[m.id]={key,V,urls:{},n:++VIS.n};return V}
+function visionForget(){Host.sceneSent={};Host.idsSent={};Host.sightSent={}}
+function sceneForPlayer(pid){const m=activeMap();if(!m||!Vision.on(m))return sceneFor();const V=visionFor(m);return sceneFor(pid,V,V.by[pid]?pid:"")}
+/* send each player their scene and pictures, if they changed. quick = mid-drag: only when what they can see changed */
+function visionSync(m,quick){const V=visionFor(m),c=VIS.cache[m.id],url=who=>c.urls[who]||(c.urls[who]=(who==="seen"?V.seen:who?V.by[who]:V.party).toDataURL("image/png"));
+  Host.sceneSent=Host.sceneSent||{};Host.idsSent=Host.idsSent||{};Host.sightSent=Host.sightSent||{};
+  for(const [conn,i] of Host.conns){const pid=i.playerId,who=V.by[pid]?pid:"",sc=sceneFor(pid,V,who);
+    const ids=sc.tokens.map(t=>t.id).join()+"|"+sc.doors.map(d=>d.id+(d.open?1:0)).join()+"|"+sc.templates.length;
+    if(quick){if(ids!==Host.idsSent[conn]){Host.idsSent[conn]=ids;Host.sceneSent[conn]=null;sendTo(conn,{t:"scene",scene:sc})}}
+    else{const js=JSON.stringify(sc);if(js!==Host.sceneSent[conn]){Host.sceneSent[conn]=js;Host.idsSent[conn]=ids;sendTo(conn,{t:"scene",scene:sc})}}
+    const mk=c.n+"|"+who;if(Host.sightSent[conn]!==mk){Host.sightSent[conn]=mk;sendTo(conn,{t:"sight",vis:url(who),seen:url("seen")})}}}
+/* a token moved: tell only the players who can see it, and bring everyone's view up to date a moment later */
+function tokTell(m,t,final,except){const msg={t:"tok",id:t.id,x:t.x,y:t.y,final:!!final};
+  if(!(m===activeMap()&&Vision.on(m))){broadcast(msg,except);return}
+  if(Host.status!=="online"||!Host.conns.size)return;const c=VIS.cache[m.id],V=c&&c.V;
+  for(const [conn,i] of Host.conns){if(conn===except)continue;if(t.owner===i.playerId||(V&&Vision.sees(V,V.by[i.playerId]?i.playerId:"",m.grid,t)))sendTo(conn,msg)}
+  if(!VIS.t)VIS.t=setTimeout(()=>{VIS.t=0;const am=activeMap();if(am&&Vision.on(am)&&Host.status==="online"&&Host.conns.size)visionSync(am,true)},140)}
+/* the GM's "what players see" preview: the selected token's player, or the whole party */
+function gmPreviewSight(){const m=curMap();if(!m||!MapV||!MapV.preview||!Vision.on(m))return null;const V=visionFor(m),t=selTok(),who=t&&t.owner&&V.by[t.owner]?t.owner:"";
+  return {vis:who?V.by[who]:V.party,seen:V.seen,sees:k=>(who&&k.owner===who)||Vision.sees(V,who,m.grid,k)}}
+function visionAfter(m){save();if(MapV)MapV.invalidate();requestRender()}
+function gmLightEvent(type,d,m){const L=lightList(m);
+  switch(type){
+    case "light-add":{const n=ui.lightNew||{},per=Grid.per(m.grid),l=Vision.cleanLight({x:d.x,y:d.y,bright:n.bright!=null?n.bright:per*4,dim:n.dim!=null?n.dim:per*4,color:n.color,angle:n.angle,dir:0},m);
+      if(l&&L.length<400){L.push(l);MapV.lightSel=l.id;visionAfter(m)}return true}
+    case "light-set":{const l=L.find(x=>x.id===d.id);if(l){const c=Vision.cleanLight({...l,...d,id:l.id},m);if(c)Object.assign(l,c)}visionAfter(m);return true}
+    case "light-del":{const i=L.findIndex(x=>x.id===d);if(i>=0){L.splice(i,1);visionAfter(m)}return true}
+    case "light-select":requestRender();return true;
+  }
+  return false}
+function lightEdit(patch){const m=curMap();if(!m)return;const l=lightList(m).find(x=>x.id===MapV.lightSel);
+  if(l){const c=Vision.cleanLight({...l,...patch,id:l.id},m);if(c){for(const k of ["angle","dir"])delete l[k];Object.assign(l,c)}visionAfter(m)}
+  else{ui.lightNew={...(ui.lightNew||{}),...patch};render()}}
+function lightBar(view,m){const g=m.grid,u=esc(Grid.unit(g)),per=Grid.per(g),sel=lightList(m).find(l=>l.id===view.lightSel),n=ui.lightNew||{},cur=sel||{bright:n.bright!=null?n.bright:per*4,dim:n.dim!=null?n.dim:per*4,color:n.color||"#ffd94a",angle:n.angle||0};
+  const amb=Vision.ambient(m),inp=(k,label)=>`<label class="faint" style="font-size:12px;color:#a1a4b8;display:flex;align-items:center;gap:5px">${label} <input type="number" min="0" step="any" value="${cur[k]||0}" data-act-change="light-num" data-k="${k}" style="width:4.8em;min-height:0;padding:3px 6px" aria-label="${label} (${u})"> ${u}</label>`;
+  return `<div class="map-sub" role="toolbar" aria-label="Lights">
+    <span class="label" style="color:#a1a4b8">${sel?"This light":"New lights"}</span>${inp("bright","Bright")}${inp("dim","then dim for")}
+    <select data-act-change="light-beam" aria-label="Beam" style="width:auto;min-height:0;padding:4px 8px">${[[0,"All round"],[120,"Wide beam"],[60,"Beam"],[30,"Narrow beam"]].map(([v,l])=>`<option value="${v}" ${(cur.angle||0)===v?"selected":""}>${l}</option>`).join("")}</select>
+    <span class="inks">${INK_COLORS.map(c=>`<button class="inkdot ${cur.color===c?"on":""}" style="background:${c}" data-act="light-color" data-v="${c}" aria-label="Color ${c}"></button>`).join("")}</span>
+    ${sel?`<button class="btn sm" data-act="light-del">Remove</button><span class="faint" style="font-size:12px;color:#a1a4b8">Drag to move it${sel.angle?", Shift+drag to aim it":""}.</span>`:`<span class="faint" style="font-size:12px;color:#a1a4b8">Click the map to place a light. Players never see these marks.</span>`}
+    <span class="label" style="color:#a1a4b8">This map is</span><span class="seg">${[["day","Lit"],["dim","Dim"],["dark","Dark"]].map(([k,l])=>`<button class="${amb===k?"on":""}" data-act="map-ambient" data-v="${k}" title="${k==="day"?"Everything in sight shows":k==="dim"?"Everything in sight shows dimly; lights show clearly":"Only lights and dark sight show anything"}">${l}</button>`).join("")}</span>
+    ${Vision.on(m)?"":`<span class="faint" style="font-size:12px;color:#ffb057">Light and sight are off for this map (Map settings).</span>`}
+  </div>`}
+/* the token panel: what this token sees, and the light it carries */
+function tokSightHTML(m,t){const u=esc(Grid.unit(m.grid)),e=eyesOfTok(t),own=t.sight||{},lt=t.light||{},g=Vision.eyes({...t,sight:null,light:null},t.kind==="pc"&&t.ref?pc(t.ref):null);
+  const f=(k,label,val,ph,title)=>`<label class="tks-e" title="${title}">${label} <input type="number" min="0" step="any" value="${val||""}" placeholder="${ph}" data-act-change="tk-sight" data-k="${k}" aria-label="${label} (${u})"> ${u}</label>`;
+  return `<div class="field"><span class="label">Sight and light</span><div class="tks">
+    ${t.owner?f("dark","Sees in the dark",own.dark,g.dark||0,"How far this token sees with no light at all")+f("range","Sees no further than",own.range,g.range||"∞","Leave empty for no limit"):`<p class="faint" style="margin:0;font-size:12px">Only a player's token gives sight. This one can still carry a light.</p>`}
+    ${f("bright","Carries a light: bright",lt.bright,(g.light&&g.light.bright)||0,"A torch, a lantern, a flashlight")}${f("dim","then dim for",lt.dim,(g.light&&g.light.dim)||0,"How much further the dim light reaches")}
+  </div></div>`}
+function visionSettingsHTML(m){const v=m.vision===true?"on":m.vision===false?"off":"auto";
+  return `<div class="field" style="margin-top:8px"><label class="label" for="mm-vision">Light and sight</label><select id="mm-vision" data-act-change="map-vision">
+      <option value="auto" ${v==="auto"?"selected":""}>Automatic: on once this map has walls (${Vision.on(m)?"on now":"off now"})</option><option value="on" ${v==="on"?"selected":""}>On: players see only what their tokens see</option><option value="off" ${v==="off"?"selected":""}>Off: players see the whole map</option></select></div>
+    <div class="row" style="justify-content:space-between;gap:8px"><span class="seg">${[["day","Lit"],["dim","Dim"],["dark","Dark"]].map(([k,l])=>`<button class="${Vision.ambient(m)===k?"on":""}" data-act="map-ambient" data-v="${k}">${l}</button>`).join("")}</span>
+      <button class="btn sm ghost ${ui.confirm==="vision-reset"?"danger":""}" data-act="vision-reset" title="Players' maps go dark again except where their tokens see right now">${ui.confirm==="vision-reset"?"Yes, forget it":"Forget explored areas"}</button></div>`}
+Object.assign(A,{
+  "light-color":el=>lightEdit({color:el.dataset.v}),
+  "light-del":()=>{const m=curMap();if(m&&MapV.lightSel){const id=MapV.lightSel;MapV.lightSel=null;gmLightEvent("light-del",id,m)}},
+  "map-ambient":el=>{const m=curMap();if(!m||!Vision.AMBIENT.includes(el.dataset.v))return;m.ambient=el.dataset.v;visionAfter(m);render()},
+  "vision-reset":()=>{const m=curMap();if(!m)return;if(ui.confirm!=="vision-reset"){ui.confirm="vision-reset";render();return}
+    ui.confirm=null;delete m.seen;delete VIS.seen[m.id];delete VIS.cache[m.id];Host.lastScene="";visionAfter(m);render();showNotice("Explored areas forgotten for this map.")},
+});
+Object.assign(CHANGE,{
+  "light-num":el=>lightEdit({[el.dataset.k==="dim"?"dim":"bright"]:Math.max(0,Number(el.value)||0)}),
+  "light-beam":el=>lightEdit({angle:Number(el.value)||0}),
+  "map-vision":el=>{const m=curMap();if(!m)return;if(el.value==="on")m.vision=true;else if(el.value==="off")m.vision=false;else delete m.vision;Host.lastScene="";visionAfter(m);render()},
+  "tk-sight":el=>{const t=selTok(),k=el.dataset.k,v=Math.max(0,Number(el.value)||0);if(!t)return;
+    if(k==="dark"||k==="range"){const s2={...(t.sight||{})};if(v)s2[k]=v;else delete s2[k];if(Object.keys(s2).length)t.sight=s2;else delete t.sight}
+    else{const l={...(t.light||{})};if(v)l[k]=v;else delete l[k];if(l.bright||l.dim)t.light={bright:l.bright||0,dim:l.dim||0,color:l.color||"#ffd94a"};else delete t.light}
+    visionAfter(curMap());render()},
+});

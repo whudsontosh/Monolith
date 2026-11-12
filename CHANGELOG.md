@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.6.0
+
+- **Light and sight.** On a map with walls, each player now sees only what their own tokens can see.
+  Walls, closed doors and curtains block the view, and opening a door shows what's behind it.
+- **Explored areas stay on the map**, dimmed, and are remembered between sessions. Tokens only show
+  where a player can see right now.
+- **Darkness and lights.** A map can be lit, dim or dark. A new Lights tool (L) places lights,
+  including beams. A token can carry a light, and can have dark sight.
+- **Nothing hidden is sent.** A player's app only receives the tokens, doors and templates in their
+  view, never the walls, the lights, or what is out of sight.
+- The GM still sees everything. "Preview what players see" shows the party's view, or one player's
+  when their token is selected.
+- Map settings can turn this off for a map, and can forget the explored areas.
+
+Maps that already have walls switch to this automatically. Set "Light and sight" to Off in Map
+settings to keep a map fully visible.
+
 ## 1.5.0
 
 - **Walls.** A new Walls tool (W) for the GM: click to draw walls corner by corner. Players' tokens

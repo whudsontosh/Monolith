@@ -1,6 +1,6 @@
 """Monolith without Cyberpunk: the tiny test game provides only characters and a roll, and every
 core screen still works (roster, backups, campaigns, hosting, joining, the map table, rolls, chat)."""
-import asyncio, json, sys
+import asyncio, json, os, sys
 from playwright.async_api import async_playwright
 from harness import *
 
@@ -274,9 +274,88 @@ async def main():
         await gm.click("[data-act=map-tool][data-t=select]")
         x=await gm.evaluate("""(async()=>{const before=ui.mapId,cv=document.createElement('canvas');cv.width=400;cv.height=300;cv.getContext('2d').fillRect(0,0,400,300);
           const j={format:0.3,resolution:{map_origin:{x:0,y:0},map_size:{x:4,y:3},pixels_per_grid:100},line_of_sight:[[{x:1,y:1},{x:3,y:1},{x:3,y:2}]],portals:[{position:{x:2,y:2},bounds:[{x:1.5,y:2},{x:2.5,y:2}],closed:true}],lights:[{position:{x:2,y:1.5},range:4,color:'ffeccd8b'}],image:cv.toDataURL('image/png').split(',')[1]};
-          await importUvtt(new File([JSON.stringify(j)],'Crypt.dd2vtt'));const m=curMap(),out=[m.name,m.w,m.h,m.grid.size,m.walls.map(w=>[w.kind,w.a,w.b]),m.lights];
+          await importUvtt(new File([JSON.stringify(j)],'Crypt.dd2vtt'));const m=curMap(),out=[m.name,m.w,m.h,m.grid.size,m.walls.map(w=>[w.kind,w.a,w.b]),m.lights.map(l=>[l.x,l.y,l.bright,l.dim,l.color])];
           st.maps=st.maps.filter(x=>x!==m);ui.mapId=before;save();render();return out})()""")
-        ok(x==["Crypt",400,300,100,[["wall",[100,100],[300,100]],["wall",[300,100],[300,200]],["door",[150,200],[250,200]]],[{"x":200,"y":150,"r":4,"color":"#cd8b"+"" if False else x[5][0]["color"]}]] and x[5][0]["color"]=="#eccd8b","a Universal VTT file becomes a map with its grid, walls, door and lights: "+str(x[:5]))
+        ok(x==["Crypt",400,300,100,[["wall",[100,100],[300,100]],["wall",[300,100],[300,200]],["door",[150,200],[250,200]]],[[200,150,4,4,"#eccd8b"]]],"a Universal VTT file becomes a map with its grid, walls, door and lights: "+str(x[:5]))
+        # light and sight (vision.js): what each player is sent
+        bad=await gm.evaluate("""(()=>{const bad=[],ok=(c,m)=>{if(!c)bad.push(m)},W=(a,b,kind,x={})=>Walls.clean({a,b,kind,...x},{w:2000,h:2000}),g={size:70,m:2,unit:'m'};
+          ok(!Vision.on({})&&Vision.on({walls:[W([0,0],[70,0],'wall')]})&&!Vision.on({walls:[W([0,0],[70,0],'window')]})&&!Vision.on({vision:false,walls:[W([0,0],[70,0],'wall')]})&&Vision.on({vision:true}),'on by itself once something blocks sight');
+          const A={x:105,y:210},B={x:595,y:210},line=(kind,x)=>({walls:[W([350,0],[350,420],kind,x)]});
+          ok(!Vision.clear(line('wall'),A,B)&&!Vision.clear(line('door'),A,B)&&Vision.clear(line('door',{open:true}),A,B)&&Vision.clear(line('window'),A,B)&&!Vision.clear(line('curtain'),A,B)&&Vision.clear(line('invisible'),A,B),'which kinds stop sight');
+          const room=[W([70,70],[350,70],'wall'),W([350,70],[350,350],'wall'),W([350,350],[70,350],'wall'),W([70,350],[70,70],'wall')],P=Vision.outline(Vision.segments({walls:room}),210,210,5000);let inside=true;
+          for(let i=0;i<P.length;i+=2)if(P[i]<69||P[i]>351||P[i+1]<69||P[i+1]>351)inside=false;ok(inside&&P.length>=8,'sight from inside a closed room stays inside it');
+          const L=Vision.lights({grid:g,w:700,h:420,lights:[{x:10,y:20,r:4,color:'#eccd8b'},{x:1,y:1,bright:0,dim:0},{x:5,y:5,bright:6,dim:2,angle:60,dir:7}]});
+          ok(L.length===2&&L[0].bright===4&&L[0].dim===4&&L[0].id&&L[1].angle===60&&L[1].dir<6.3,'lights cleaned, and ones from a 1.5 import brought up to date');
+          ok(Vision.eyes({sight:{dark:12}},null).dark===12&&Vision.eyes({},null).dark===0,'a token sees normally unless told otherwise');
+          GAME.map={sightFor:(ch)=>({dark:ch.dv,light:{bright:6,dim:6}})};let e=Vision.eyes({},{dv:18});ok(e.dark===18&&e.light.bright===6,'a game fills sight in from the character');
+          e=Vision.eyes({sight:{dark:4},light:{bright:2,dim:0}},{dv:18});ok(e.dark===4&&e.light.bright===2,'and the setting on the token wins');delete GAME.map;
+          const eyes=t=>Vision.eyes(t,null),mk=(o)=>({w:700,h:420,grid:g,walls:[W([350,0],[350,420],'wall')],tokens:[{id:'a',owner:'p1',x:105,y:210,size:1},{id:'n',x:595,y:210,size:1}],...o}),npc=m=>m.tokens[1];
+          let m=mk({}),V=Vision.compute(m,eyes);ok(!Vision.sees(V,'p1',g,npc(m))&&Vision.seesPoint(V,'p1',280,100)&&!Vision.seesPoint(V,'p1',420,210),'a wall hides what is behind it');
+          m=mk({walls:[]});V=Vision.compute(m,eyes);ok(Vision.sees(V,'p1',g,npc(m)),'no wall, and it shows');
+          m=mk({walls:[],ambient:'dark'});V=Vision.compute(m,eyes);ok(Vision.seesPoint(V,'p1',105,210)&&!Vision.seesPoint(V,'p1',245,210)&&!Vision.sees(V,'p1',g,npc(m)),'in the dark a token makes out only its own spot');
+          m=mk({walls:[],ambient:'dark'});m.tokens[0].sight={dark:4};V=Vision.compute(m,eyes);ok(Vision.seesPoint(V,'p1',200,210)&&!Vision.seesPoint(V,'p1',300,210),'dark sight reaches as far as it says');
+          m=mk({walls:[],ambient:'dark',lights:[{id:'l',x:595,y:210,bright:2,dim:2}]});V=Vision.compute(m,eyes);ok(Vision.sees(V,'p1',g,npc(m))&&!Vision.seesPoint(V,'p1',400,210),'a far light shows what stands in it, and nothing between');
+          m=mk({ambient:'dark',lights:[{id:'l',x:595,y:210,bright:2,dim:2}]});V=Vision.compute(m,eyes);ok(!Vision.sees(V,'p1',g,npc(m)),'but not through a wall');
+          m=mk({walls:[],ambient:'dark'});m.tokens[1].light={bright:2,dim:2};V=Vision.compute(m,eyes);ok(Vision.sees(V,'p1',g,npc(m)),'a token carrying a light is seen by it');
+          m=mk({walls:[]});m.tokens[0].sight={range:4};V=Vision.compute(m,eyes);ok(Vision.seesPoint(V,'p1',200,210)&&!Vision.seesPoint(V,'p1',300,210),'a sight limit');
+          m=mk({walls:[]});m.tokens.push({id:'b',owner:'p2',x:595,y:350,size:1});m.walls=[W([350,0],[350,420],'wall')];V=Vision.compute(m,eyes);
+          ok(Vision.seesPoint(V,'p2',600,100)&&!Vision.seesPoint(V,'p1',600,100)&&Vision.seesPoint(V,'',600,100)&&Vision.seesPoint(V,'',100,100),'each player gets their own view; the party view joins them');
+          m=mk({walls:[],ambient:'dark',lights:[{id:'l',x:350,y:210,bright:4,dim:0,angle:60,dir:0}]});V=Vision.compute(m,eyes);ok(Vision.seesPoint(V,'p1',440,210)&&!Vision.seesPoint(V,'p1',260,210)&&!Vision.seesPoint(V,'p1',350,120),'a beam lights only where it points');
+          return bad})()""")
+        ok(bad==[],"light and sight maths: walls, doors, darkness, lights, dark sight, beams and separate views"+(": "+"; ".join(bad[:4]) if bad else ""))
+        ms=await gm.evaluate("""(()=>{let s=7;const r=()=>{s=(s*16807)%2147483647;return s/2147483647},m={w:3500,h:2800,grid:{size:70,m:5,unit:'ft'},ambient:'dim',walls:[],tokens:[],lights:[]};
+          for(let i=0;i<500;i++){const x=r()*3400,y=r()*2700,a=r()*6.28,l=70+r()*210;m.walls.push({id:'w'+i,a:[x,y],b:[x+Math.cos(a)*l,y+Math.sin(a)*l],kind:'wall'})}
+          for(let i=0;i<10;i++)m.lights.push({id:'l'+i,x:r()*3500,y:r()*2800,bright:20,dim:20,color:'#ffd94a'});
+          for(let i=0;i<8;i++)m.tokens.push({id:'t'+i,owner:'p'+i,x:r()*3500,y:r()*2800,size:1,sight:{dark:60}});
+          const eyes=t=>Vision.eyes(t,null);Vision.compute(m,eyes);const t0=performance.now();for(let i=0;i<3;i++)Vision.compute(m,eyes);const all=(performance.now()-t0)/3;
+          m.tokens[0].x+=35;const k0=performance.now();Vision.key(m,eyes);return [Math.round(all),Math.round((performance.now()-k0)*10)/10]})()""")
+        print("     (500 walls, 10 lights, 8 players: every view worked out in "+str(ms[0])+" ms; change check "+str(ms[1])+" ms)")
+        ok(ms[0]<1500,"500 walls, 10 lights and 8 players are worked out fast enough: "+str(ms[0])+" ms")
+        await gm.evaluate("""id=>{const m=curMap(),W=(a,b,kind,x={})=>Walls.clean({a,b,kind,...x},m);window.__sent=[];const _s=sendTo;sendTo=function(c,msg){__sent.push(msg.t+':'+(msg.id||''));return _s(c,msg)};
+          m.walls=[W([700,0],[700,350],'wall'),{...W([700,350],[700,420],'door'),id:'vd'},W([700,420],[700,m.h],'wall')];const t=m.tokens.find(t=>t.id===id);t.x=385;t.y=385;
+          m.tokens.push({id:'npc2',kind:'npc',label:'Lurker',color:'#c8102e',size:1,x:875,y:385,hidden:false,owner:null});m.templates=[Tpl.clean({id:'far',shape:'circle',x:1050,y:385,size:1},m)];m.templates[0].by='gm';delete m.seen;delete VIS.seen[m.id];delete VIS.cache[m.id];save();render();MapV.invalidate()}""",ids[0])
+        await gm.wait_for_timeout(700)
+        x=await pl.evaluate("({v:Net.scene.vision,toks:Net.scene.tokens.map(t=>t.label),tpl:Net.scene.templates.length,doors:Net.scene.doors.length,vis:!!(Net.sight&&Net.sight.vis&&Net.sight.vis.width>10),seen:!!(Net.sight&&Net.sight.seen&&Net.sight.seen.width>10),walls:'walls' in Net.scene||'lights' in Net.scene})")
+        ok(x["v"] and "Lurker" not in x["toks"] and "Wren" in x["toks"] and x["tpl"]==0,"with walls on the map, a token and a template behind one are not sent to the player: "+str(x["toks"]))
+        ok(x["vis"] and x["seen"] and x["doors"]==1 and not x["walls"],"the player gets pictures of what they see and have seen, the door in view, and never the walls or lights")
+        if os.environ.get("SHOTS"): await pl.wait_for_timeout(300);await pl.screenshot(path=os.environ["SHOTS"]+"/sight-player-closed.png")
+        await gm.evaluate("(()=>{__sent.length=0;const m=curMap(),t=m.tokens.find(t=>t.id==='npc2');t.x=945;gmMapEvent('move',{id:'npc2',final:false});t.x=875;gmMapEvent('move',{id:'npc2',final:true})})()");await gm.wait_for_timeout(500)
+        ok(await gm.evaluate("!__sent.includes('tok:npc2')") and await pl.evaluate("!Net.scene.tokens.some(t=>t.label==='Lurker')"),"moving that token tells the player nothing")
+        await gm.evaluate("gmWallEvent('door',{id:'vd'},curMap())");await gm.wait_for_timeout(700)
+        ok(await pl.evaluate("Net.scene.tokens.some(t=>t.label==='Lurker')&&Net.scene.templates.length===1"),"opening the door shows what is through it")
+        if os.environ.get("SHOTS"): await pl.wait_for_timeout(300);await pl.screenshot(path=os.environ["SHOTS"]+"/sight-player-open.png")
+        await gm.evaluate("(()=>{__sent.length=0;const m=curMap(),t=m.tokens.find(t=>t.id==='npc2');t.x=945;gmMapEvent('move',{id:'npc2',final:false})})()");await gm.wait_for_timeout(400)
+        ok(await gm.evaluate("__sent.includes('tok:npc2')") and await pl.evaluate("Net.scene.tokens.find(t=>t.label==='Lurker').x")==945,"and now its moves reach the player")
+        await gm.evaluate("(()=>{const m=curMap(),t=m.tokens.find(t=>t.id==='npc2');t.x=875;gmMapEvent('move',{id:'npc2',final:true});gmWallEvent('door',{id:'vd'},m)})()");await gm.wait_for_timeout(700)
+        x=await gm.evaluate("(()=>{const m=curMap(),V=visionFor(m);return [Vision.alphaAt(V,'seen',875,385)>24,Vision.alphaAt(V,'',875,385)>24,Vision.alphaAt(V,'seen',1900,1200)>24]})()")
+        ok(x==[True,False,False] and await pl.evaluate("!Net.scene.tokens.some(t=>t.label==='Lurker')&&Net.scene.doors.length===1"),"closing it hides the token again, but the room stays remembered as explored: "+str(x))
+        await gm.evaluate("(()=>{const m=curMap();m.ambient='dark';gmWallEvent('door',{id:'vd'},m)})()");await gm.wait_for_timeout(700)
+        ok(await pl.evaluate("!Net.scene.tokens.some(t=>t.label==='Lurker')"),"on a dark map an open door shows nothing without light")
+        await gm.click("[data-act=map-tool][data-t=lights]");await gm.wait_for_timeout(100)
+        a=await gm.evaluate("(()=>{MapV.fit();const r=MapV.canvas.getBoundingClientRect(),p=MapV.toScreen(910,385);return [r.left+p.x,r.top+p.y]})()")
+        await gm.mouse.click(a[0],a[1]);await gm.wait_for_timeout(700)
+        x=await gm.evaluate("curMap().lights.map(l=>[l.x,l.y,l.bright,l.dim])")
+        ok(len(x)==1 and x[0][2]==x[0][3]>0 and abs(x[0][0]-910)<=36 and await pl.evaluate("Net.scene.tokens.some(t=>t.label==='Lurker')"),"the GM places a light with the Lights tool, and what stands in it shows: "+str(x))
+        if os.environ.get("SHOTS"): await pl.wait_for_timeout(300);await pl.screenshot(path=os.environ["SHOTS"]+"/sight-player-dark.png");await gm.screenshot(path=os.environ["SHOTS"]+"/sight-gm-lights.png")
+        await gm.keyboard.press("Delete");await gm.wait_for_timeout(600)
+        ok(await gm.evaluate("curMap().lights.length")==0 and await pl.evaluate("!Net.scene.tokens.some(t=>t.label==='Lurker')"),"Delete removes the light and the dark closes in")
+        await gm.evaluate("id=>{const m=curMap(),t=m.tokens.find(t=>t.id===id);MapV.sel=id;ui.mapSel=id;render()}",ids[0]);await gm.click("[data-act=map-tool][data-t=select]");await gm.wait_for_timeout(150)
+        await gm.fill("[data-act-change=tk-sight][data-k=dark]","20");await gm.press("[data-act-change=tk-sight][data-k=dark]","Enter");await gm.wait_for_timeout(700)
+        ok(await gm.evaluate("id=>curMap().tokens.find(t=>t.id===id).sight.dark",ids[0])==20 and await pl.evaluate("Net.scene.tokens.some(t=>t.label==='Lurker')"),"dark sight set in the token panel lets the player see in the dark")
+        await gm.click("[data-act=map-preview]");await gm.wait_for_timeout(200)
+        x=await gm.evaluate("(()=>{const s=MapV.cfg.sight(),m=curMap();return [!!(s&&s.vis&&s.seen),s.sees(m.tokens.find(t=>t.id==='npc2')),s.sees({id:'q',x:1900,y:1200,size:1})]})()")
+        ok(x==[True,True,False],"the GM's preview shows the map as that player sees it")
+        if os.environ.get("SHOTS"): await gm.screenshot(path=os.environ["SHOTS"]+"/sight-gm-preview.png")
+        await gm.click("[data-act=map-preview]")
+        await gm.wait_for_timeout(2700)
+        ok(await gm.evaluate("(curMap().seen||'').startsWith('data:image/png')"),"what the party has explored is saved with the campaign")
+        await gm.evaluate("ui.mapSettingsOpen=true;render()");await gm.click("[data-act=vision-reset]");await gm.click("[data-act=vision-reset]");await gm.wait_for_timeout(600)
+        ok(await gm.evaluate("(()=>{const m=curMap(),V=visionFor(m);return Vision.alphaAt(V,'seen',1900,1200)<=24&&Vision.alphaAt(V,'seen',385,385)>24})()"),"forgetting explored areas keeps only what is in sight now")
+        await gm.select_option("#mm-vision","off");await gm.wait_for_timeout(600)
+        ok(await pl.evaluate("Net.scene.vision===false&&Net.scene.tokens.some(t=>t.label==='Lurker')&&PMapV.cfg.sight()===null"),"with light and sight switched off, players see the whole map again")
+        await gm.evaluate("id=>{sendTo=(function(){const m=curMap();m.walls=[];m.lights=[];m.templates=[];delete m.ambient;delete m.vision;delete m.seen;m.tokens=m.tokens.filter(t=>t.id!=='npc2');const t=m.tokens.find(t=>t.id===id);delete t.sight;Host.lastScene='';save();render();MapV.invalidate()})()||sendTo}",ids[0])
+        await gm.wait_for_timeout(500)
+        ok(await pl.evaluate("Net.scene.vision===false&&Net.scene.doors.length===0"),"(the map is back to plain for the tests that follow)")
         ok(await gm.evaluate("appOlder('1.1.9',MONOLITH_VERSION)&&appOlder(undefined,MONOLITH_VERSION)&&!appOlder(MONOLITH_VERSION,MONOLITH_VERSION)&&!appOlder('99.0.0',MONOLITH_VERSION)"),"version comparison for the join check")
         why=await pl.evaluate("""new Promise(res=>{const ws=new WebSocket(Net.url.replace(/^http/i,'ws')+'/ws');
           ws.onopen=()=>ws.send(JSON.stringify({...helloMsg({character:null,peek:true}),app:'1.1.1',playerId:'old-app'}));
